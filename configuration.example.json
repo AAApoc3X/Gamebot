@@ -1,0 +1,546 @@
+{
+  "currency": "Tickets",
+  "timezone": "America/New_York",
+  "enabled": false,
+  "delivery_enabled": false,
+  "allow_unlinked": false,
+  "linked_role": 0,
+  "staff_role": 0,
+  "games_channel": 0,
+  "daily_channel": 0,
+  "results_channel": 0,
+  "admin_channel": 0,
+  "transactions_channel": 0,
+  "purchase_store_id": 0,
+  "kaos_bot_id": 0,
+  "server_id": 1,
+  "choice_timing": "entry",
+  "reward_mode": "both",
+  "transfers_enabled": true,
+  "daily": {
+    "amount": 1,
+    "reset": "midnight",
+    "method": "both"
+  },
+  "games": {
+    "supply_drop": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "pick_a_crate": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "scratch_card": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "dice": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "prize_wheel": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "fishing": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "treasure_dig": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "higher_lower": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "minefield": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "deal_or_keep": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    },
+    "rps": {
+      "enabled": true,
+      "costs": {
+        "base": 1,
+        "elite": 3,
+        "premium": 5
+      },
+      "odds": {
+        "base": [
+          80,
+          18,
+          2
+        ],
+        "elite": [
+          60,
+          33,
+          7
+        ],
+        "premium": [
+          40,
+          45,
+          15
+        ]
+      },
+      "loss_return": {
+        "mode": "fixed",
+        "amount": 0,
+        "round": "down"
+      },
+      "draw_return": {
+        "mode": "percent",
+        "amount": 100,
+        "round": "down"
+      }
+    }
+  },
+  "prizes": {
+    "base": {
+      "points": {
+        "amount": 100
+      },
+      "kits": [
+        {
+          "weight": 80,
+          "rewards": [
+            {
+              "kind": "kit",
+              "name": "base_kit",
+              "quantity": 1
+            }
+          ]
+        },
+        {
+          "weight": 20,
+          "rewards": [
+            {
+              "kind": "kit",
+              "name": "base_special_kit",
+              "quantity": 1
+            }
+          ]
+        }
+      ]
+    },
+    "elite": {
+      "points": {
+        "amount": 300
+      },
+      "kits": [
+        {
+          "weight": 80,
+          "rewards": [
+            {
+              "kind": "kit",
+              "name": "elite_kit",
+              "quantity": 1
+            }
+          ]
+        },
+        {
+          "weight": 20,
+          "rewards": [
+            {
+              "kind": "kit",
+              "name": "elite_special_kit",
+              "quantity": 1
+            }
+          ]
+        }
+      ]
+    },
+    "premium": {
+      "points": {
+        "amount": 1000
+      },
+      "kits": [
+        {
+          "weight": 80,
+          "rewards": [
+            {
+              "kind": "kit",
+              "name": "premium_kit",
+              "quantity": 1
+            }
+          ]
+        },
+        {
+          "weight": 20,
+          "rewards": [
+            {
+              "kind": "kit",
+              "name": "premium_special_kit",
+              "quantity": 1
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "lottery": {
+    "enabled": false,
+    "min": 1,
+    "max": 20,
+    "cost": 1,
+    "max_entries": 20,
+    "payout": "highest",
+    "pick_mode": "both",
+    "bundles": {},
+    "reward_tiers": {
+      "1": "base",
+      "2": "elite",
+      "3": "premium"
+    },
+    "zero_return": {
+      "mode": "percent",
+      "amount": 100,
+      "round": "down"
+    },
+    "schedule": {
+      "mode": "daily",
+      "minutes": 60,
+      "time": "20:00",
+      "weekdays": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ]
+    },
+    "cutoff_minutes": 5,
+    "reminder_minutes": 15,
+    "announce_winners": true
+  },
+  "bingo": {
+    "cost": 1,
+    "minutes": 30,
+    "numbers": 30,
+    "size": 3,
+    "participation_tier": "base",
+    "winner_tier": "premium"
+  },
+  "giveaway": {
+    "amount": 5,
+    "winners": 1,
+    "minutes": 60
+  },
+  "products": {}
+}
