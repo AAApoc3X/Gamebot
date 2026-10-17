@@ -1,3 +1,9 @@
+# Guided settings update
+
+All normal owner setup uses Discord command fields, dropdowns, channel/role selectors, buttons and labeled forms. There is no configuration-file upload or JSON text editor. Start with `/gamesadmin settings` for the complete panel, or `/gamesadmin configure` to jump to a section. Reports may still be downloaded for reading; they are not settings files to edit or upload.
+
+Private panels last 15 minutes of inactivity. Unsaved drafts are discarded on cancellation, expiration or restart. Review changes, then Confirm Save. Settings changed by another command while the panel was open cause a conflict warning; reopen the panel rather than overwriting those changes. Delivery enabling checks the KAOS connection. Existing paid games/draws retain frozen rules. The API-key modal maximum length is corrected in this release.
+
 # Rust Games Bot owner guide
 
 Use this guide after the separate Games Bot is online in your Discord community. Games and KAOS API delivery start paused. Your existing Kill Tracker is separate and is not changed.
@@ -68,20 +74,15 @@ Examples:
 /gamesadmin prize action:remove tier:base option_number:2
 ```
 
-The weight is relative within that tier: 80 and 20 mean 80%/20% when those are the only two alternatives. A player receives one randomly chosen alternative. An alternative may contain several rewards as a bundle; use the advanced `prize:base`, `prize:elite` or `prize:premium` editor to define bundles. An example is:
+Weights are relative within a tier: alternatives weighted 80 and 20 have an 80%/20% selection chance. To build a prize bundle without editing a file:
 
-```json
-{
-  "points": {"amount": 100},
-  "kits": [
-    {"weight": 80, "rewards": [{"kind": "kit", "name": "starter", "quantity": 1}]},
-    {"weight": 20, "rewards": [
-      {"kind": "kit", "name": "farmer", "quantity": 1},
-      {"kind": "item", "name": "stone.hatchet", "quantity": 2}
-    ]}
-  ]
-}
-```
+1. Run `/gamesadmin configure section:prize:base` (or select Elite/Premium).
+2. Select **Kit and item prize alternatives → Add entry**.
+3. Set the **Relative selection weight**.
+4. Open **Rewards in this bundle**. Set each reward's type, exact kit/item name and quantity. Use **Add entry** for more rewards in the same bundle.
+5. Return with **Back**, select **Review changes**, read the complete review and click **Confirm Save**.
+
+New rewards start with CHANGE_ME as a reminder; replace that name before saving. Up to 50 alternatives per tier and 10 rewards per alternative are supported. Menus are paginated.
 
 Use `/gamesadmin reward_settings availability:both choice_timing:entry`.
 
@@ -128,14 +129,14 @@ An idle game settles after 15 minutes: progress games collect their current tier
 
 ## 6 Rust World Lottery
 
-Use `/gamesadmin configure section:lottery`. The editor contains all fields with current values. Edit values and keep the required fields.
+Use `/gamesadmin configure section:lottery`. Choose labeled settings from the menu. Dropdowns control choices and on/off switches; number and text forms handle amounts and names. Nothing requires editing JSON. Changes remain a draft until **Review changes → Confirm Save**.
 
 | Field | Meaning |
 |---|---|
 | enabled | Opens future draws automatically while games are enabled. |
 | min / max | Lowest/highest selectable numbers. Players choose 3 different numbers. |
 | cost | Tickets per combination unless a matching entry bundle is configured. |
-| bundles | Optional complete purchase prices, e.g. `{"3":2,"5":4}` means 3 combinations cost 2 tickets, 5 cost 4. |
+| bundles | Open Discount combination bundles and use Add entry: choose the number of combinations and total ticket price. For example, 3 combinations for 2 tickets. |
 | max_entries | Per-player combinations per draw; 0 means no configured limit, still bounded by available unique combinations. Purchases are up to 100 combinations at a time. |
 | pick_mode | `manual`, `quick`, or `both`. |
 | payout | `highest` pays only the best match per player; `each` pays every combination. |
@@ -146,30 +147,21 @@ Use `/gamesadmin configure section:lottery`. The editor contains all fields with
 | reminder_minutes | Post a reminder this many minutes before the draw; 0 disables it. |
 | announce_winners | Include up to 20 player results in the public result message. Complete results remain in the report. |
 
-Example schedule values:
+Open **Draw schedule → Method** to choose:
 
-```json
-{"mode":"interval","minutes":60,"time":"20:00","weekdays":[0,1,2,3,4,5,6]}
-```
+- **Owner / manual:** the owner draws with the event command.
+- **Every set number of minutes:** enter the interval in minutes.
+- **Daily:** enter a local draw time, such as 20:00.
+- **Weekly:** enter the draw time and select exactly one day.
+- **Selected weekdays:** enter the draw time and select days by name.
 
-- `interval`: Every `minutes` minutes, measured from opening the next draw.
-- `daily`: At `time` each day in the community timezone.
-- `weekly`: At `time` on one weekday; set weekdays to a one-element list.
-- `weekdays`: At `time` on the selected weekdays. 0 Monday through 6 Sunday.
-- `manual`: Owner uses the draw control; no automatic deadline.
+Times use the community time zone, set through Community settings or the daily settings command. Weekdays use a multi-select menu with Monday–Sunday names. Unused schedule fields are retained for switching modes later. For interval draws, the entry cutoff must be shorter than the interval.
 
 Matches count in any order. Every player's combinations are unique for that draw; different players may choose the same numbers and both win. Quick Pick generates unique combinations too. Buying more combinations improves the chance of matching; it does not change the drawn numbers or reduce other players' chances. One exact 3-match chance is `1 / combinations(number_pool_size, 3)`. For N unique combinations the chance of at least one exact three-match is N divided by that denominator. Lower-match bundle odds depend on overlap; they are not calculated as independent trials.
 
-Default zero matches returns 100% of the entry cost. You may choose:
+Default zero matches returns 100% of the entry cost. Open **Tickets returned for zero matches** and choose the method: **Full ticket refund**, **Percentage of tickets spent**, **Fixed ticket amount**, or **No ticket return**. Set Amount for percentage/fixed returns and Percentage rounding where needed. A fixed return can intentionally exceed the entry cost.
 
-```json
-{"mode":"full","amount":0,"round":"down"}
-{"mode":"percent","amount":50,"round":"down"}
-{"mode":"fixed","amount":1,"round":"down"}
-{"mode":"none","amount":0,"round":"down"}
-```
-
-Use one object, not all four. `round` can be up/down for percentage returns. A fixed return can be larger than the entry cost if you intentionally want that. With `highest`, ticket return applies to the player's total draw spend only if all their combinations have zero matches. With `each`, it applies separately to each zero-match combination; actual bundle prices are split across combinations in whole tickets so full refunds never exceed the real purchase cost. A zero-ticket return is allowed only when you intentionally configure it.
+With Best combination per player, returns apply to the total draw spend only if every combination has zero matches. With Every combination, returns apply separately to zero-match combinations; full refunds never exceed the actual purchase price. Unused amount/rounding values are retained when switching methods.
 
 Player entry example:
 
@@ -247,7 +239,6 @@ For a held legacy parser send only, inspect KAOS and old Transactions history. `
 /gamesadmin setup
 /gamesadmin configure
 /gamesadmin settings
-/gamesadmin import_config
 /gamesadmin enable
 /gamesadmin panel
 /gamesadmin tickets

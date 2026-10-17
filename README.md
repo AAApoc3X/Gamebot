@@ -20,7 +20,7 @@ A separate Discord bot for Rust Console communities. It manages its own ticket c
 - Configurable zero-match lottery returns and RPS loss/draw returns.
 - Linked-only participation or allow-unlinked with rewards waiting for an API-confirmed KAOS link.
 - Tip4Serv one-time payment webhook with a secret endpoint and payment-level deduplication.
-- Owner/staff controls, durable results and reward queue, owner-confirmed real reward tests, JSON reports and configuration export/import.
+- Owner/staff controls, durable results and reward queue, owner-confirmed real reward tests, read-only reports and guided Discord configuration.
 - Original local GIF animations and their generator. No external animation service required.
 
 ## Deploy to Railway from GitHub
@@ -81,7 +81,7 @@ See API_UPGRADE.md. Keep the same `/data` volume. Tickets, claims, game state, d
 This integration uses Tip4Serv's documented `payment.success` webhook payload. It does NOT accept player-submitted receipts or ordinary channel messages as proof of payment.
 
 1. In `/gamesadmin configure section:general`, set `purchase_store_id` to your actual Tip4Serv store ID. A store must map to exactly one Discord community in this bot.
-2. In section `products`, map Tip4Serv product IDs to tickets per unit, e.g. `{"104":10,"105":50}`. Prices are configured in Tip4Serv; the bot credits these ticket amounts times basket quantity.
+2. In section `products`, choose Add entry and enter each Tip4Serv product code and tickets per unit. Prices are configured in Tip4Serv; the bot credits these ticket amounts times basket quantity.
 3. Generate a random secret with at least 32 characters (recommended: `python -c "import secrets; print(secrets.token_urlsafe(48))"`). Add it as Railway `TIP4SERV_WEBHOOK_SECRET` and redeploy.
 4. Enable Railway public networking on this service, using its provided PORT. Configure Tip4Serv's webhook URL as `https://YOUR-RAILWAY-DOMAIN/tip4serv/YOUR_SECRET`, event `payment.success`.
 5. Treat the entire URL as a credential. The receiver checks its secret with a constant-time comparison. No unverified signature-header algorithm is assumed. HTTP access logging is disabled to avoid logging the secret URL. Rotate the secret and update the webhook if exposed.

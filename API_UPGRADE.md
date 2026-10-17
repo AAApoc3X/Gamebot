@@ -48,4 +48,4 @@ An API key cannot deduplicate a reward that was previously issued by a parser me
 
 ## Secrets and exports
 
-Never include actual keys in configuration JSON. The owner settings export contains no keys. Encrypted saved keys are stored in a separate database table; environment keys are never written to the database. A volume backup may contain encrypted keys, so protect it and keep the encryption master key separate.
+Never include actual keys in reports. Guided settings never display saved keys. Encrypted saved keys are stored in a separate database table; environment keys are never written to the database. A volume backup may contain encrypted keys, so protect it and keep the encryption master key separate.

@@ -4,7 +4,7 @@ Updated October 17, 2026. This package replaces parser-based rewards with KAOS k
 
 ## Automated validation
 
-56 tests pass, using local databases and simulated Discord, HTTP and KAOS responses.
+71 tests pass, using local databases and simulated Discord, HTTP and KAOS responses.
 
 Retained game checks cover wallets, balance conservation, duplicate transfers, midnight/24-hour claims, all 11 games, game ownership, frozen prize rules, inactivity refunds, after-win choices, unique lottery picks, bundle refunds, cutoff windows, highest/each payouts, Bingo, giveaways, purchase deduplication, secret Tip4Serv authentication, daylight-saving schedules and restart persistence.
 
@@ -23,7 +23,7 @@ API checks cover:
 - Discord payload serialization and revised setup fields, owner/member access, persistent panels and game views.
 - Exact original database schema migration preserves balances, pauses delivery, leaves old sent rewards alone, holds ambiguous parser records and safely converts unsent records. Reopening does not repeat migration or pause an already re-enabled API deployment.
 
-Local compilation passes. The bot has 36 executable slash commands. Setup no longer accepts a Transactions channel, KAOS bot or linked role. API key entry and /link_check replace manual verify_link.
+Local compilation passes. The bot has 35 executable slash commands. Setup no longer accepts a Transactions channel, KAOS bot or linked role. API key entry and /link_check replace manual verify_link.
 
 ## Operational verification still required
 
@@ -36,3 +36,5 @@ API accepted means the credit/bank endpoint returned success. It does not mean a
 ## Named server selection checks
 
 Ten additional tests cover catalog isolation, no-charge missing selection, saved preferences, immutable destinations, after-win holds, reward ownership, bundle-wide destinations, choosing prize/server in either order, lottery/Bingo destinations, ticket-only giveaways and catalog changes after entry.
+
+Guided settings tests cover default sections, native selectors, draft validation, stale settings conflicts, ownership checks, multi-reward bundles/products, odds input, cancellation, save confirmation and the 4,000-character API-key form. No live Discord/KAOS credentials were used.

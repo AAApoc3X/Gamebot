@@ -250,16 +250,6 @@ class APIKeyModal(discord.ui.Modal):
   except ValueError as exc:await reply(i,str(exc))
   finally:self.key.default=None
 
-class ConfigModal(discord.ui.Modal):
- def __init__(self,section,value):
-  super().__init__(title='Edit '+section[:35]);self.section=section
-  self.text=discord.ui.TextInput(label='Settings JSON',style=discord.TextStyle.paragraph,default=json.dumps(value,indent=2)[:4000],max_length=4000);self.add_item(self.text)
- async def on_submit(self,i):
-  try:
-   guard(i,owner=True);value=json.loads(str(self.text));c=patch(i.client.store.cfg(i.guild_id),self.section,value);i.client.store.save(i.guild_id,c,i.user.id)
-   await reply(i,'Settings saved. Existing games and draws retain their entry rules. New settings apply to new games/draws.')
-  except (ValueError,KeyError,TypeError)as exc:await reply(i,'Not saved: '+str(exc))
-
 class GamesBot(commands.Bot):
  def __init__(self,path=None):
   intents=discord.Intents.default();intents.message_content=False
@@ -419,28 +409,19 @@ def attach_commands(bot):
   elif action=='remove':dest.remove(i.guild_id,server_id)
   elif action=='timing':dest.set_timing(i.guild_id,timing)
   await reply(i,'Reward server selection: '+dest.timing(i.guild_id)+'\n'+'\n'.join(f"S{x['slot']} — {x['label']}"for x in dest.options(i.guild_id,c['server_id']))+'\nExisting paid entries and selected rewards retain their original destinations.')
- @admin.command(name='configure',description='Owner edits validated settings for a game, prizes or community controls')
- @app_commands.describe(section='general, daily, lottery, bingo, giveaway, products, game:rps, prize:base, etc.')
- async def configure(i:discord.Interaction,section:str):
-  c=guard(i,owner=True)
-  if section=='general':value={k:v for k,v in c.items()if k not in ('games','prizes','daily','lottery','bingo','giveaway','products')}
-  elif section.startswith('game:')and section.split(':')[1]in GAMES:value=c['games'][section.split(':')[1]]
-  elif section.startswith('prize:')and section.split(':')[1]in TIERS:value=c['prizes'][section.split(':')[1]]
-  elif section in ('daily','lottery','bingo','giveaway','products'):value=c[section]
-  else:raise ValueError('Choose a configuration section from the suggestions.')
-  if len(json.dumps(value,indent=2))>4000:raise ValueError('This section exceeds the editor size. Export and use /gamesadmin import_config.')
-  await i.response.send_modal(ConfigModal(section,value))
+ @admin.command(name='configure',description='Owner opens guided settings with menus, forms and save confirmation')
+ @app_commands.describe(section='Choose lottery, daily, Bingo, prizes, games or community settings')
+ async def configure(i:discord.Interaction,section:str='general'):
+  from settings_ui import open_settings
+  await open_settings(i,guard,reply,section)
  @configure.autocomplete('section')
- async def sections(i,current):return [app_commands.Choice(name=x,value=x)for x in ['general','daily','lottery','bingo','giveaway','products']+['game:'+g for g in GAMES]+['prize:'+t for t in TIERS]if current.lower()in x][:25]
- @admin.command(name='settings',description='Export all current settings and prize rules')
- async def settings(i:discord.Interaction):guard(i,owner=True);await reply(i,'Current community configuration. No secrets included.',file=file_json('games-settings.json',bot.store.cfg(i.guild_id)))
- @admin.command(name='import_config',description='Owner uploads a complete configuration JSON file')
- async def import_config(i:discord.Interaction,file:discord.Attachment):
-  guard(i,owner=True)
-  if file.size>100000:raise ValueError('Configuration maximum 100 KB.')
-  await i.response.defer(ephemeral=True);c=normalize(json.loads(await file.read()));validate(c)
-  async def accept(j):guard(j,owner=True);bot.store.save(j.guild_id,c,j.user.id);await edit_message(j,content='Configuration replaced. Existing game and draw rules are preserved.',view=None)
-  await reply(i,'Replace all settings using this validated file?',view=Confirm(i.user.id,accept))
+ async def sections(i,current):
+  from settings_ui import label
+  return [app_commands.Choice(name=(label(x.split(':')[0])+': '+label(x.split(':')[1])if ':'in x else label(x)),value=x)for x in ['general','daily','lottery','bingo','giveaway','products']+['game:'+g for g in GAMES]+['prize:'+t for t in TIERS]if current.lower()in x][:25]
+ @admin.command(name='settings',description='Owner reviews and changes settings using private guided controls')
+ async def settings(i:discord.Interaction):
+  from settings_ui import open_settings
+  await open_settings(i,guard,reply)
  @admin.command(name='enable',description='Owner separately enables or pauses new games and in-game delivery')
  async def enable(i:discord.Interaction,games:bool,delivery:bool):
   guard(i,owner=True)
@@ -497,7 +478,9 @@ def attach_commands(bot):
  @admin.command(name='prize',description='Owner configures tier points or adds/removes weighted kit/item alternatives')
  async def prize(i:discord.Interaction,action:Literal['add','remove','points','list'],tier:Level,kind:Literal['kit','item']='kit',name:str='',quantity:app_commands.Range[int,1,1000000]=1,weight:app_commands.Range[int,1,1000000]=1,option_number:Optional[int]=None):
   guard(i,owner=True);c=bot.store.cfg(i.guild_id);p=c['prizes'][tier]
-  if action=='list':await reply(i,'Prize alternatives are numbered from 1.',file=file_json(tier+'-prizes.json',p));return
+  if action=='list':
+   from settings_ui import open_settings
+   await open_settings(i,guard,reply,'prize:'+tier);return
   if action=='points':p['points']['amount']=quantity
   elif action=='add':
    from configuration import safe_name
