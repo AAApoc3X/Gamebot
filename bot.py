@@ -77,6 +77,15 @@ class Confirm(SafeView):
   if self.busy:await reply(i,'Already processing; check the result before taking another action.');return
   self.busy=True;self.stop();await edit_message(i,content='Cancelled. No new action taken.',view=None)
 
+class ServerPicker(SafeView):
+ def __init__(self,uid,options,callback):
+  super().__init__(uid);self.callback=callback
+  if not options:raise ValueError('No available game servers. Ask the owner to configure them.')
+  select=discord.ui.Select(placeholder='Select the game server to receive your reward',options=[discord.SelectOption(label=f"S{x['slot']} — {x['label']}"[:100],value=str(x['slot']))for x in options])
+  async def pick(i):
+   guard(i,player=True);await self.callback(i,int(select.values[0]));self.stop()
+  select.callback=pick;self.add_item(select)
+
 class SessionView(SafeView):
  def __init__(self,bot,r):
   super().__init__(r['uid'],timeout=900);self.bot=bot;self.key=r['id'];st=r['state'];game=r['game']
@@ -104,6 +113,7 @@ class SessionView(SafeView):
 
 def render_session(r):
  st=r['state'];text=f'**{GAME_LABELS[r["game"]]} · {st["level"].title()} entry**\nGame ID: `{r["id"]}`\n'
+ slot=st['config'].get('server_id');text+='Reward server: '+(f'S{slot}'if slot is not None else 'choose after winning using /prizes')+'\n'
  if r['status']=='active':
   if r['game']in ('higher_lower','minefield'):
    earned=TIERS[max(TIERS.index(st.get('floor','base')),min(2,st['steps']//2))];text+=f'Current collectible prize: **{earned.title()}**\n'
@@ -119,21 +129,36 @@ def render_session(r):
  else:text+=f' · Returned {st.get("returned",0)} {st["config"]["currency"]}.'
  return text
 
-async def review_game(i,game,level,kind):
- c=guard(i,player=True);await ensure_link(i);i.client.engine.eligibility(i.guild_id,i.user.id,roles(i));g=c['games'][game];cost=g['costs'][level]
+async def review_game(i,game,level,kind,server_id=None):
+ c=guard(i,player=True);await ensure_link(i);i.client.engine.eligibility(i.guild_id,i.user.id,roles(i));dest=i.client.store.destinations;options=dest.options(i.guild_id,c['server_id']);timing=dest.timing(i.guild_id)
+ if timing=='before':
+  try:server_id=dest.resolve(i.guild_id,server_id,c['server_id'],i.user.id)
+  except ValueError:
+   async def selected(j,slot):await review_game(j,game,level,kind,slot)
+   await reply(i,'Choose the game server before reviewing this entry.',view=ServerPicker(i.user.id,options,selected));return
+ g=c['games'][game];cost=g['costs'][level]
  odds=g['odds'][level];desc=RULES.get(game,'Reveal a guaranteed Base, Elite or Premium prize using the displayed tier odds.')
  text=f'**{GAME_LABELS[game]} · {level.title()}**\nCost: **{cost} {c["currency"]}**\n{desc}\n'
  if game=='rps':text+=f'Win: {level.title()} prize. Loss return: {refund(cost,g["loss_return"])}. Draw return: {refund(cost,g["draw_return"])} {c["currency"]}.\n'
  else:text+=f'Initial tier odds: Base {odds[0]}%, Elite {odds[1]}%, Premium {odds[2]}%.\n'
+ text+='Destination: '+(next(x['label']for x in options if x['slot']==server_id)+f' (S{server_id})'if timing=='before'else 'choose after winning in /prizes')+'\n'
  text+='Reward: '+('choose after winning'if c['choice_timing']=='after'and c['reward_mode']=='both'else kind if c['reward_mode']=='both'else c['reward_mode'])+'.\nConfirm to spend tickets. Current settings apply when you confirm.'
  # Snapshot hash prevents a configuration change between displayed cost and confirmation.
- frozen=json.dumps(c,sort_keys=True)
+ frozen=json.dumps([c,options,timing],sort_keys=True)
  async def accept(j):
   guard(j,player=True);await ensure_link(j)
-  if json.dumps(j.client.store.cfg(j.guild_id),sort_keys=True)!=frozen:raise ValueError('Settings changed. Open the game again to review the new cost and odds.')
-  r=j.client.engine.start(j.guild_id,j.user.id,game,level,kind,'game:'+str(j.id),roles(j))
+  if json.dumps([j.client.store.cfg(j.guild_id),j.client.store.destinations.options(j.guild_id,c['server_id']),j.client.store.destinations.timing(j.guild_id)],sort_keys=True)!=frozen:raise ValueError('Settings changed. Open the game again to review the new cost and odds.')
+  r=j.client.engine.start(j.guild_id,j.user.id,game,level,kind,'game:'+str(j.id),roles(j),server_id=server_id)
   await edit_message(j,content=render_session(r),view=SessionView(j.client,r))
- await reply(i,text,view=Confirm(i.user.id,accept),file=file_json('prize-rules.json',{'prizes':c['prizes'],'game':g,'reward_mode':c['reward_mode'],'choice_timing':c['choice_timing']}))
+ view=Confirm(i.user.id,accept)
+ if timing=='before' and len(options)>1:
+  button=discord.ui.Button(label='Change reward server',style=discord.ButtonStyle.secondary)
+  async def change(j):
+   view.stop()
+   async def selected(k,slot):await review_game(k,game,level,kind,slot)
+   await reply(j,'Choose another reward destination before paying.',view=ServerPicker(j.user.id,options,selected))
+  button.callback=change;view.add_item(button)
+ await reply(i,text,view=view,file=file_json('prize-rules.json',{'prizes':c['prizes'],'game':g,'reward_mode':c['reward_mode'],'choice_timing':c['choice_timing']}))
 
 class Lobby(SafeView):
  def __init__(self,uid):
@@ -164,7 +189,9 @@ class Panel(SafeView):
 async def show_prizes(i):
  guard(i,player=True);rows=i.client.store.db.execute('SELECT * FROM rewards WHERE guild=? AND uid=? ORDER BY created DESC LIMIT 30',(i.guild_id,i.user.id)).fetchall()
  if not rows:await reply(i,'No rewards yet.');return
- text='**Your recent rewards**\n'+'\n'.join(f'`{r["id"]}` · {r["tier"].title()} · {r["status"]}'+(' · '+str(json.loads(r['payload']).get('quantity',''))+' '+(json.loads(r['payload']).get('name')or 'KAOS points')if r['status']!='choice'else '') for r in rows)
+ def target(row):
+  cfg=json.loads(row['config']);slot=cfg.get('server_id');return f' · S{slot}'if slot is not None else ' · choose server'
+ text='**Your recent rewards**\n'+'\n'.join(f'`{r["id"]}` · {r["tier"].title()} · {r["status"]}'+target(r)+(' · '+str(json.loads(r['payload']).get('quantity',''))+' '+(json.loads(r['payload']).get('name')or 'KAOS points')if r['status']!='choice'else '') for r in rows)
  view=SafeView(i.user.id)
  for row in [r for r in rows if r['status']=='choice'][:5]:
   for kind in ('kits','points'):
@@ -172,6 +199,17 @@ async def show_prizes(i):
    async def choose(j,key=row['id'],kind=kind):
     guard(j,player=True);j.client.engine.choose_reward(j.guild_id,j.user.id,key,kind);await reply(j,'Reward choice saved. Use /prizes to see the updated status.')
    btn.callback=choose;view.add_item(btn)
+ groups=set()
+ for row in rows:
+  frozen=json.loads(row['config']);group=row['destination_group']or row['id']
+  if frozen.get('server_id')is not None or row['status']not in ('choice','awaiting_server')or group in groups:continue
+  groups.add(group)
+  if len(groups)>5:break
+  btn=discord.ui.Button(label='Choose server · '+row['tier'].title()+' '+row['id'][-6:])
+  async def choose_server(j,key=row['id'],frozen=frozen):
+   async def selected(k,slot):k.client.engine.select_server(k.guild_id,k.user.id,key,slot);await edit_message(k,content='Reward destination saved. It cannot change after selection; see /prizes for delivery status.',view=None)
+   await reply(j,'Select where this reward bundle will be delivered.',view=ServerPicker(j.user.id,frozen.get('_destination_options',[]),selected))
+  btn.callback=choose_server;view.add_item(btn)
  await reply(i,text[:1900],view=view)
 
 async def show_lottery(i):
@@ -190,9 +228,15 @@ async def show_events(i):
    btn=discord.ui.Button(label=f'Join {r["type"]}'+(f' · {kind}'if r['type']=='bingo'else ''))
    async def join(j,key=r['id'],kind=kind):
     c=guard(j,player=True);d=j.client.engine.draw(key);spec=d['state']['config']['bingo'];cost=spec['cost']if d['type']=='bingo'else 0
-    async def confirm(k):
-     guard(k,player=True);await ensure_link(k,required=(not c['allow_unlinked'] or not d['state']['config']['allow_unlinked']));nums=k.client.engine.join_event(k.guild_id,k.user.id,key,kind,'event:'+str(k.id),roles(k));await edit_message(k,content='Entered. '+('Your bingo card: '+', '.join(map(str,nums))if nums else 'Good luck!'),view=None)
-    await reply(j,f'Join {d["type"]} for **{cost} {c["currency"]}**? '+('Winner tier '+spec['winner_tier']+'; all other entrants receive '+spec['participation_tier']+'. Reward: '+kind+'. Card completes on a row, column or diagonal.'if cost else 'Free entry; ticket winners are selected randomly at closing.'),view=Confirm(j.user.id,confirm))
+    async def prepare(j,slot=None):
+     async def confirm(k):
+      guard(k,player=True);await ensure_link(k,required=(not c['allow_unlinked'] or not d['state']['config']['allow_unlinked']));nums=k.client.engine.join_event(k.guild_id,k.user.id,key,kind,'event:'+str(k.id),roles(k),server_id=slot);await edit_message(k,content='Entered. '+('Your bingo card: '+', '.join(map(str,nums))if nums else 'Good luck!'),view=None)
+     await reply(j,f'Join {d["type"]} for **{cost} {c["currency"]}**? '+('Winner tier '+spec['winner_tier']+'; other entrants receive '+spec['participation_tier']+'. Reward: '+kind+'. Destination: '+(f'S{slot}'if slot else 'choose after winning')if cost else 'Free entry; random ticket winners selected at closing.'),view=Confirm(j.user.id,confirm))
+    frozen=d['state']['config']
+    if d['type']=='bingo' and frozen.get('_destination_timing','before')=='before':
+     options=frozen.get('_destination_options',[{'slot':frozen['server_id'],'label':f"Game server {frozen['server_id']}"}])
+     await reply(j,'Choose the destination for your bingo kit or points prize.',view=ServerPicker(j.user.id,options,prepare));return
+    await prepare(j)
    btn.callback=join;v.add_item(btn)
  await reply(i,'**Open events**\n'+'\n'.join(f'{r["type"].title()} · closes <t:{int(r["due"])}:R> · `{r["id"]}`'for r in rs),view=v)
 
@@ -274,7 +318,21 @@ def attach_commands(bot):
  async def games(i:discord.Interaction):guard(i,player=True);await reply(i,'Choose a game, entry level and reward type.',view=Lobby(i.user.id))
  @bot.tree.command(name='play',description='Review a game, ticket cost and prize rules before spending')
  @app_commands.describe(game='Game to play',level='Base, Elite or Premium entry level',reward='Kits/items or KAOS points; owner settings determine when you choose')
- async def play(i:discord.Interaction,game:GameName,level:Level='base',reward:Kind='kits'):await review_game(i,game,level,reward)
+ async def play(i:discord.Interaction,game:GameName,level:Level='base',reward:Kind='kits',server_id:Optional[int]=None):await review_game(i,game,level,reward,server_id)
+ @bot.tree.command(name='server',description='Choose your preferred game server for future reward entries')
+ async def server(i:discord.Interaction):
+  c=guard(i,player=True);dest=bot.store.destinations
+  async def selected(j,slot):
+   dest.save_preference(j.guild_id,j.user.id,slot,c['server_id']);await edit_message(j,content='Preferred game server saved for future before-play entries. Existing rewards and entries keep their destinations.',view=None)
+  await reply(i,'Choose your preferred destination for future games. After-win rewards are selected separately in /prizes.',view=ServerPicker(i.user.id,dest.options(i.guild_id,c['server_id']),selected))
+ @bot.tree.command(name='reward_server',description='Select the game server for an unclaimed reward by reward ID')
+ async def reward_server(i:discord.Interaction,reward_id:str):
+  guard(i,player=True);row=bot.store.db.execute('SELECT config FROM rewards WHERE id=? AND guild=? AND uid=?',(reward_id,i.guild_id,i.user.id)).fetchone()
+  if not row:raise ValueError('Reward not found for this player.')
+  frozen=json.loads(row[0])
+  if frozen.get('server_id')is not None:raise ValueError('This reward already has a fixed destination.')
+  async def selected(j,slot):bot.engine.select_server(j.guild_id,j.user.id,reward_id,slot);await edit_message(j,content='Reward destination saved.',view=None)
+  await reply(i,'Choose a game server for this reward bundle.',view=ServerPicker(i.user.id,frozen.get('_destination_options',[]),selected))
  @bot.tree.command(name='daily',description='Claim your daily tickets in the Daily claim channel')
  async def daily(i:discord.Interaction):
   c=guard(i,player=True,daily=True);await ensure_link(i);n=bot.engine.claim(i.guild_id,i.user.id,'command',roles(i));await reply(i,f'Claimed **{n} {c["currency"]}**.')
@@ -307,13 +365,30 @@ def attach_commands(bot):
  async def show(i:discord.Interaction):await show_lottery(i)
  @lottery.command(name='enter',description='Review manual picks or Quick Pick combinations before paying')
  @app_commands.describe(combinations='Number of unique three-number combinations to buy',numbers='Optional: 1,2,3; 4,5,6. Leave blank for Quick Pick.',reward='Kits/items or KAOS points')
- async def enter(i:discord.Interaction,combinations:app_commands.Range[int,1,100]=1,numbers:str='',reward:Kind='kits'):
+ async def enter(i:discord.Interaction,combinations:app_commands.Range[int,1,100]=1,numbers:str='',reward:Kind='kits',server_id:Optional[int]=None):
   c=guard(i,player=True);r=bot.store.db.execute('SELECT id FROM draws WHERE guild=? AND type="lottery" AND status="open"',(i.guild_id,)).fetchone()
   if not r:raise ValueError('No open lottery.')
   draw=bot.engine.draw(r[0]);lo=draw['state']['config']['lottery'];prob=lottery_probabilities(lo['min'],lo['max'],combinations)
+  frozen=draw['state']['config'];options=frozen.get('_destination_options',[{'slot':frozen['server_id'],'label':f"Game server {frozen['server_id']}"}])
+  if frozen.get('_destination_timing','before')=='before':
+   preferred=server_id if server_id is not None else bot.store.destinations.preference(i.guild_id,i.user.id)
+   if preferred is None and len(options)==1:preferred=options[0]['slot']
+   if preferred not in [x['slot']for x in options]:
+    async def selected(j,slot):await enter.callback(j,combinations,numbers,reward,slot)
+    await reply(i,'Choose the server for any kit or points prize from this purchase.',view=ServerPicker(i.user.id,options,selected));return
+   server_id=preferred
+
   async def accept(j):
-   guard(j,player=True);await ensure_link(j,required=(not bot.store.cfg(j.guild_id)['allow_unlinked'] or not draw['state']['config']['allow_unlinked']));picks=bot.engine.lottery_enter(j.guild_id,j.user.id,r[0],combinations,numbers,reward,'lotteryentry:'+str(j.id),roles(j));await edit_message(j,content='Entered draw `'+r[0]+'`. Your numbers:\n'+'\n'.join(', '.join(map(str,x))for x in picks),view=None)
-  await reply(i,f'Buy **{combinations} combinations** for **{lo["bundles"].get(str(combinations),combinations*lo["cost"])} {c["currency"]}**?\nPicks: {numbers or "Quick Pick"}\nPayout: {lo["payout"]}; reward: {reward if draw["state"]["config"]["choice_timing"]=="entry" else "choose after winning"}.\n1/2/3 matches: '+', '.join(lo['reward_tiers'][str(k)]for k in (1,2,3))+f'. Zero-match return: {json.dumps(lo["zero_return"])}.\nChance of all three numbers across these new unique combinations: {prob["premium_any"]:.6%}. Lower match odds depend on overlap between your combinations.',view=Confirm(i.user.id,accept),file=file_json('lottery-prize-rules.json',draw['state']['config']['prizes']))
+   guard(j,player=True);await ensure_link(j,required=(not bot.store.cfg(j.guild_id)['allow_unlinked'] or not draw['state']['config']['allow_unlinked']));picks=bot.engine.lottery_enter(j.guild_id,j.user.id,r[0],combinations,numbers,reward,'lotteryentry:'+str(j.id),roles(j),server_id=server_id);await edit_message(j,content='Entered draw `'+r[0]+'`. Your numbers:\n'+'\n'.join(', '.join(map(str,x))for x in picks),view=None)
+  view=Confirm(i.user.id,accept)
+  if frozen.get('_destination_timing','before')=='before' and len(options)>1:
+   button=discord.ui.Button(label='Change reward server',style=discord.ButtonStyle.secondary)
+   async def change(j):
+    view.stop()
+    async def selected(k,slot):await enter.callback(k,combinations,numbers,reward,slot)
+    await reply(j,'Choose another reward server before paying.',view=ServerPicker(j.user.id,options,selected))
+   button.callback=change;view.add_item(button)
+  await reply(i,f'Buy **{combinations} combinations** for **{lo["bundles"].get(str(combinations),combinations*lo["cost"])} {c["currency"]}**?\nPicks: {numbers or "Quick Pick"}\nReward server: {('S'+str(server_id))if frozen.get('_destination_timing','before')=='before'else 'choose after winning'}\nPayout: {lo["payout"]}; reward: {reward if draw["state"]["config"]["choice_timing"]=="entry" else "choose after winning"}.\n1/2/3 matches: '+', '.join(lo['reward_tiers'][str(k)]for k in (1,2,3))+f'. Zero-match return: {json.dumps(lo["zero_return"])}.\nChance of all three numbers across these new unique combinations: {prob["premium_any"]:.6%}. Lower match odds depend on overlap between your combinations.',view=view,file=file_json('lottery-prize-rules.json',draw['state']['config']['prizes']))
  @lottery.command(name='entries',description='See your combinations in the current lottery')
  async def entries(i:discord.Interaction):
   guard(i,player=True);rs=[dict(r)for r in bot.store.db.execute('SELECT entries.* FROM entries JOIN draws ON entries.draw=draws.id WHERE draws.guild=? AND entries.uid=? AND draws.type="lottery" ORDER BY draws.created DESC LIMIT 1000',(i.guild_id,i.user.id))];await reply(i,'Your latest lottery entries.',file=file_json('lottery-entries.json',rs))
@@ -337,6 +412,13 @@ def attach_commands(bot):
   async def accept(j):
    guard(j,owner=True);bot.kaos.vault.delete(j.guild_id,j.user.id);c=bot.store.cfg(j.guild_id);c['delivery_enabled']=False;bot.store.save(j.guild_id,c,j.user.id);await edit_message(j,content='Stored community key removed and delivery paused. Host-managed environment keys must be removed in Railway separately.',view=None)
   await reply(i,'Remove this community’s stored API key and pause its delivery?',view=Confirm(i.user.id,accept))
+ @admin.command(name='servers',description='Owner manages named KAOS servers and before-play or after-win selection')
+ async def servers(i:discord.Interaction,action:Literal['add','remove','timing','list'],server_id:Optional[int]=None,name:str='',timing:Literal['before','after']='before'):
+  c=guard(i,owner=True);dest=bot.store.destinations
+  if action=='add':dest.set(i.guild_id,server_id,name)
+  elif action=='remove':dest.remove(i.guild_id,server_id)
+  elif action=='timing':dest.set_timing(i.guild_id,timing)
+  await reply(i,'Reward server selection: '+dest.timing(i.guild_id)+'\n'+'\n'.join(f"S{x['slot']} — {x['label']}"for x in dest.options(i.guild_id,c['server_id']))+'\nExisting paid entries and selected rewards retain their original destinations.')
  @admin.command(name='configure',description='Owner edits validated settings for a game, prizes or community controls')
  @app_commands.describe(section='general, daily, lottery, bingo, giveaway, products, game:rps, prize:base, etc.')
  async def configure(i:discord.Interaction,section:str):

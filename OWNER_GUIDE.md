@@ -2,6 +2,10 @@
 
 Use this guide after the separate Games Bot is online in your Discord community. Games and KAOS API delivery start paused. Your existing Kill Tracker is separate and is not changed.
 
+## Multiple reward servers
+
+See SERVER_SELECTION_GUIDE.md for owner server labels, player dropdowns, before-entry and after-win selection, lottery/Bingo choices and safe delivery behavior. This supersedes the single-server setup default when a catalog is configured.
+
 ## 1 Set up channels
 
 Create/select existing text channels with these purposes. Names are examples.
@@ -237,6 +241,9 @@ For a held legacy parser send only, inspect KAOS and old Transactions history. `
 /lottery show
 /lottery enter
 /lottery entries
+/server
+/reward_server
+/gamesadmin servers
 /gamesadmin setup
 /gamesadmin configure
 /gamesadmin settings

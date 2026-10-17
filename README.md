@@ -1,5 +1,10 @@
 # Rust Games Bot
 
+## Multiple named reward servers
+
+Players can choose where kits, items and KAOS points are delivered. Owners manage the named KAOS slot list and before/after selection timing. See SERVER_SELECTION_GUIDE.md in this package for commands and migration behavior.
+
+
 A separate Discord bot for Rust Console communities. It manages its own ticket currency and delivers in-game kit, item and KAOS-point rewards through the KAOS kapi_minor API, using community-specific API keys. It does not modify the Kill Tracker.
 
 ## Included

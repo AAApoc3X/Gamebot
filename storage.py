@@ -2,6 +2,7 @@ import sqlite3,json,time,threading
 from contextlib import contextmanager
 from pathlib import Path
 from configuration import defaults,validate,normalize
+from destinations import Destinations
 class Store:
  def __init__(self,path):
   if str(path)!=':memory:':Path(path).parent.mkdir(parents=True,exist_ok=True)
@@ -34,6 +35,7 @@ class Store:
     self.db.execute("UPDATE rewards SET transport='legacy'")
     self.db.execute("UPDATE rewards SET status='migration_hold',detail='Legacy parser outcome needs owner review before API delivery' WHERE status IN ('sending','uncertain','failed')")
     self.db.execute("UPDATE rewards SET transport='api',detail='Unsent reward migrated to KAOS API' WHERE status IN ('pending','waiting_link','choice')")
+   if 'destination_group'not in columns:self.db.execute("ALTER TABLE rewards ADD COLUMN destination_group TEXT NOT NULL DEFAULT ''")
    if 'attempts'not in columns:self.db.execute('ALTER TABLE rewards ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0')
    if 'next_attempt'not in columns:self.db.execute('ALTER TABLE rewards ADD COLUMN next_attempt REAL NOT NULL DEFAULT 0')
    for r in self.db.execute('SELECT guild,config FROM communities').fetchall():
@@ -41,6 +43,9 @@ class Store:
     if any(k in c for k in ('transactions_channel','kaos_bot_id','linked_role')):
      c=normalize(c);c['delivery_enabled']=False
      self.db.execute('UPDATE communities SET config=? WHERE guild=?',(json.dumps(c),r['guild']))
+  entry_columns={r[1]for r in self.db.execute('PRAGMA table_info(entries)')}
+  if 'destination'not in entry_columns:self.db.execute("ALTER TABLE entries ADD COLUMN destination TEXT NOT NULL DEFAULT ''")
+  self.destinations=Destinations(self.db)
  @contextmanager
  def atomic(self):
   with self.lock:

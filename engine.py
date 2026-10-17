@@ -52,17 +52,19 @@ class Engine:
  def award(self,guild,uid,tier,c,kind,key):
   # Call within the same transaction as result recording; configuration is frozen.
   if kind=='choose':payload=[];status='choice'
-  elif kind=='points':payload=[{'kind':'points','name':'','quantity':c['prizes'][tier]['points']['amount']}];status='pending'
+  elif kind=='points':payload=[{'kind':'points','name':'','quantity':c['prizes'][tier]['points']['amount']}];status='pending'if c.get('server_id')is not None else 'awaiting_server'
   else:
    options=c['prizes'][tier]['kits']
    if not options:raise ValueError('This prize tier has no kit/item rewards. Ask the owner to configure it.')
-   payload=deepcopy(weighted(options,[x['weight']for x in options],self.rng)['rewards']);status='pending'
-  # One row per bundle, one parser command per child; choices expand on selection.
+   payload=deepcopy(weighted(options,[x['weight']for x in options],self.rng)['rewards']);status='pending'if c.get('server_id')is not None else 'awaiting_server'
+  group=c.get('_destination_group')or key
+  c=deepcopy(c);c['_destination_group']=group
+  # One row per bundle; all children share a destination choice.
   if payload:
    for index,p in enumerate(payload):
-    self.s.db.execute('INSERT OR IGNORE INTO rewards(id,guild,uid,tier,config,kind,payload,status,channel,created) VALUES(?,?,?,?,?,?,?,?,?,?)',
-    (f'{key}:{index}',guild,uid,tier,json.dumps(c),kind,json.dumps(p),status,0,self.clock()))
-  else:self.s.db.execute('INSERT OR IGNORE INTO rewards(id,guild,uid,tier,config,kind,payload,status,channel,created) VALUES(?,?,?,?,?,?,?,?,?,?)',(key,guild,uid,tier,json.dumps(c),kind,'[]',status,0,self.clock()))
+    self.s.db.execute('INSERT OR IGNORE INTO rewards(id,guild,uid,tier,config,kind,payload,status,channel,created,destination_group) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+    (f'{key}:{index}',guild,uid,tier,json.dumps(c),kind,json.dumps(p),status,0,self.clock(),group))
+  else:self.s.db.execute('INSERT OR IGNORE INTO rewards(id,guild,uid,tier,config,kind,payload,status,channel,created,destination_group) VALUES(?,?,?,?,?,?,?,?,?,?,?)',(key,guild,uid,tier,json.dumps(c),kind,'[]',status,0,self.clock(),group))
  def choose_reward(self,guild,uid,key,choice):
   with self.s.atomic():
    r=self.s.db.execute('SELECT * FROM rewards WHERE id=? AND guild=? AND uid=? AND status="choice"',(key,guild,uid)).fetchone()
@@ -74,11 +76,11 @@ class Engine:
   if not r or (guild is not None and guild!=r['guild']) or (uid is not None and uid!=r['uid']):raise ValueError('Game not found for this player.')
   return dict(r)|{'state':json.loads(r['state'])}
  def write_session(self,r):self.s.db.execute('UPDATE sessions SET state=?,status=?,updated=? WHERE id=?',(json.dumps(r['state']),r['status'],self.clock(),r['id']))
- def start(self,guild,uid,game,level,kind,reference,roles=(),choice=None):
+ def start(self,guild,uid,game,level,kind,reference,roles=(),choice=None,server_id=None):
   with self.s.atomic():
    old=self.s.db.execute('SELECT id FROM sessions WHERE id=?',(reference,)).fetchone()
    if old:return self.session(reference,guild,uid)
-   c=self.eligibility(guild,uid,roles)
+   c=self.s.destinations.snapshot(guild,self.eligibility(guild,uid,roles),uid,server_id)
    if game not in GAMES or level not in TIERS:raise ValueError('Unknown game or level.')
    if not c['games'][game]['enabled']:raise ValueError('This game is disabled.')
    if self.s.db.execute('SELECT 1 FROM sessions WHERE guild=? AND uid=? AND status="active"',(guild,uid)).fetchone():raise ValueError('Finish your active game first using /resume.')
@@ -166,13 +168,14 @@ class Engine:
    c=self.s.cfg(guild)
    if not c['enabled'] or not c['lottery']['enabled']:raise ValueError('Enable games and lottery before opening a draw.')
    due=next_due(c['lottery']['schedule'],c['timezone'],self.clock());key=ident()
+   c=deepcopy(c);c['_destination_options']=self.s.destinations.options(guild,c['server_id']);c['_destination_timing']=self.s.destinations.timing(guild)
    state={'config':c,'winning':None,'summary':None}
    self.s.db.execute('INSERT INTO draws(id,guild,type,state,status,due,created) VALUES(?,?,?,?,?,?,?)',(key,guild,'lottery',json.dumps(state),'open',due,self.clock()));return key
  def draw(self,key):
   r=self.s.db.execute('SELECT * FROM draws WHERE id=?',(key,)).fetchone()
   if not r:raise ValueError('Draw not found.')
   return dict(r)|{'state':json.loads(r['state'])}
- def lottery_enter(self,guild,uid,key,lines,manual,kind,reference,roles=()):
+ def lottery_enter(self,guild,uid,key,lines,manual,kind,reference,roles=(),server_id=None):
   with self.s.atomic():
    self.eligibility(guild,uid,roles);r=self.draw(key);c=r['state']['config'];lo=c['lottery']
    if r['guild']!=guild or r['type']!='lottery' or r['status']!='open':raise ValueError('Draw is closed.')
@@ -211,7 +214,8 @@ class Engine:
    self.s.money(guild,uid,-total,'Lottery entry',reference+':entry')
    for i,nums in enumerate(picks):
     paid=total//lines+(1 if i<total%lines else 0)
-    self.s.db.execute('INSERT INTO entries VALUES(?,?,?,?,?,?)',(reference+':'+str(i),key,uid,json.dumps(nums),paid,kind))
+    self.s.db.execute('INSERT INTO entries(id,draw,uid,numbers,cost,kind) VALUES(?,?,?,?,?,?)',(reference+':'+str(i),key,uid,json.dumps(nums),paid,kind))
+    self.s.db.execute('UPDATE entries SET destination=? WHERE id=?',(json.dumps(self.entry_destination(guild,uid,c,server_id)),reference+':'+str(i)))
    return picks
  def settle_lottery(self,key,manual=False):
   with self.s.atomic():
@@ -228,7 +232,7 @@ class Engine:
     winners=group if lo['payout']=='each' else [max(group,key=lambda x:x['matches'])]
     for ent in winners:
      matches=ent['matches'];ref='lottery:'+ent['id']
-     if matches:self.award(r['guild'],uid,lo['reward_tiers'][str(matches)],c,ent['kind'],ref)
+     if matches:self.award(r['guild'],uid,lo['reward_tiers'][str(matches)],self.entry_config(c,ent),ent['kind'],ref)
      else:
       cost=ent['cost'] if lo['payout']=='each' else sum(x['cost']for x in group)
       self.s.money(r['guild'],uid,refund(cost,lo['zero_return']),'Lottery zero-match return',ref+':return')
@@ -246,8 +250,9 @@ class Engine:
    c=self.s.cfg(guild);spec=c[type_]
    if not c['enabled']:raise ValueError('Games paused.')
    if self.s.db.execute('SELECT 1 FROM draws WHERE guild=? AND type=? AND status="open"',(guild,type_)).fetchone():raise ValueError('An event of that type is already open.')
+   c=deepcopy(c);c['_destination_options']=self.s.destinations.options(guild,c['server_id']);c['_destination_timing']=self.s.destinations.timing(guild)
    key=ident();self.s.db.execute('INSERT INTO draws(id,guild,type,state,status,due,created) VALUES(?,?,?,?,?,?,?)',(key,guild,type_,json.dumps({'config':c}),'open',self.clock()+spec['minutes']*60,self.clock()));self.s.audit(guild,actor,'open_'+type_,key);return key
- def join_event(self,guild,uid,key,kind,reference,roles=()):
+ def join_event(self,guild,uid,key,kind,reference,roles=(),server_id=None):
   with self.s.atomic():
    self.eligibility(guild,uid,roles);r=self.draw(key);c=r['state']['config']
    if r['guild']!=guild or r['type']not in ('bingo','giveaway') or r['status']!='open' or self.clock()>=r['due']:raise ValueError('Event closed.')
@@ -256,7 +261,7 @@ class Engine:
    cost=c['bingo']['cost']if r['type']=='bingo' else 0
    nums=sorted(self.rng.sample(range(1,c['bingo']['numbers']+1),c['bingo']['size']**2))if r['type']=='bingo' else []
    if r['type']=='bingo':self.rng.shuffle(nums)
-   kind=self.kind(c,kind);self.s.money(guild,uid,-cost,'Event entry',reference+':entry');self.s.db.execute('INSERT INTO entries VALUES(?,?,?,?,?,?)',(reference,key,uid,json.dumps(nums),cost,kind));return nums
+   kind=self.kind(c,kind);self.s.money(guild,uid,-cost,'Event entry',reference+':entry');self.s.db.execute('INSERT INTO entries(id,draw,uid,numbers,cost,kind) VALUES(?,?,?,?,?,?)',(reference,key,uid,json.dumps(nums),cost,kind));self.s.db.execute('UPDATE entries SET destination=? WHERE id=?',(json.dumps(self.entry_destination(guild,uid,c,server_id))if r['type']=='bingo'else '',reference));return nums
  def settle_event(self,key,manual=False):
   with self.s.atomic():
    r=self.draw(key)
@@ -275,8 +280,37 @@ class Engine:
      scores[ent['uid']]=min(max(rank[n]for n in line)for line in lines)
     earliest=min(scores.values(),default=-1);st['winners']=[u for u,v in scores.items()if v==earliest];st['called']=order[:earliest+1]
     for ent in entries:
-     tier=b['winner_tier']if ent['uid']in st['winners'] else b['participation_tier'];self.award(r['guild'],ent['uid'],tier,c,ent['kind'],'bingo:'+ent['id'])
+     tier=b['winner_tier']if ent['uid']in st['winners'] else b['participation_tier'];self.award(r['guild'],ent['uid'],tier,self.entry_config(c,ent),ent['kind'],'bingo:'+ent['id'])
    self.s.db.execute('UPDATE draws SET status="drawn",state=? WHERE id=?',(json.dumps(st),key));return st
+ def entry_destination(self,guild,uid,c,server_id):
+  opts=c.get('_destination_options',[{'slot':c['server_id'],'label':f"Game server {c['server_id']}"}])
+  if not opts:raise ValueError('No game servers were available for this event. Ask the owner to cancel/refund it and open a configured event.')
+  timing=c.get('_destination_timing','before')
+  if timing=='after':return {'slot':None,'options':opts,'timing':timing}
+  slot=server_id if server_id is not None else self.s.destinations.preference(guild,uid)
+  if slot is None and len(opts)==1:slot=opts[0]['slot']
+  if slot not in [x['slot']for x in opts]:raise ValueError('Select a game server before entering this event.')
+  return {'slot':slot,'options':opts,'timing':timing}
+ def entry_config(self,c,entry):
+  c=deepcopy(c)
+  if entry.get('destination'):
+   d=json.loads(entry['destination']);c.update(server_id=d['slot'],_destination_options=d['options'],_destination_timing=d['timing'])
+  return c
+ def select_server(self,guild,uid,reward_id,server_id):
+  with self.s.atomic():
+   r=self.s.db.execute('SELECT * FROM rewards WHERE id=? AND guild=? AND uid=?',(reward_id,guild,uid)).fetchone()
+   if not r:raise ValueError('Reward not found for this player.')
+   c=json.loads(r['config']);opts=c.get('_destination_options',[])
+   if c.get('server_id')is not None:raise ValueError('This reward already has a fixed destination.')
+   if server_id not in [x['slot']for x in opts]:raise ValueError('Server was not available under this reward’s rules.')
+   group=r['destination_group']or r['id']
+   rows=self.s.db.execute('SELECT * FROM rewards WHERE guild=? AND uid=? AND destination_group=?',(guild,uid,group)).fetchall()
+   if not rows:rows=[r]
+   for row in rows:
+    if row['status']not in ('choice','awaiting_server'):raise ValueError('A reward already started delivery; destination cannot change.')
+   for row in rows:
+    frozen=json.loads(row['config']);frozen['server_id']=server_id
+    self.s.db.execute('UPDATE rewards SET config=?,status=? WHERE id=?',(json.dumps(frozen),'choice'if row['status']=='choice'else 'pending',row['id']))
  def purchase(self,guild,uid,code,quantity,payment_id):
   with self.s.atomic():
    c=self.s.cfg(guild)
