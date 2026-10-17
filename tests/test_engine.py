@@ -3,14 +3,14 @@ from datetime import datetime,timezone
 from storage import Store
 from engine import Engine,next_due,lottery_probabilities
 from configuration import defaults,validate,refund,INSTANT,TIERS
-from delivery import parser_command
+from kaos_api import reward_request
 from purchases import Purchases
 class Clock:
  def __init__(self):self.now=datetime(2026,10,17,16,tzinfo=timezone.utc).timestamp()
  def __call__(self):return self.now
 class Rules(unittest.TestCase):
  def setUp(self):
-  self.s=Store(':memory:');self.clock=Clock();self.e=Engine(self.s,random.Random(7),self.clock);self.c=defaults();self.c.update(enabled=True,delivery_enabled=True,allow_unlinked=True,reward_mode='points',games_channel=10,transactions_channel=20,kaos_bot_id=30);self.c['lottery']['enabled']=True;self.c['lottery']['schedule']['mode']='manual';self.s.save(1,self.c);self.s.money(1,101,10000,'seed','seed')
+  self.s=Store(':memory:');self.clock=Clock();self.e=Engine(self.s,random.Random(7),self.clock);self.c=defaults();self.c.update(enabled=True,delivery_enabled=True,allow_unlinked=True,reward_mode='points',games_channel=10);self.c['lottery']['enabled']=True;self.c['lottery']['schedule']['mode']='manual';self.s.save(1,self.c);self.s.money(1,101,10000,'seed','seed')
  def tearDown(self):self.s.close()
  def test_no_overdraft(self):
   with self.assertRaises(ValueError):self.s.transfer(1,101,102,10001,'a')
@@ -27,10 +27,12 @@ class Rules(unittest.TestCase):
   self.c['daily']['reset']='24h';self.s.save(1,self.c);self.e.claim(1,101,'button');self.clock.now+=86399
   with self.assertRaises(ValueError):self.e.claim(1,101,'command')
   self.clock.now+=1;self.e.claim(1,101,'command')
- def test_link_role_override_and_guild_isolation(self):
-  self.c.update(allow_unlinked=False,linked_role=999);self.s.save(1,self.c)
-  with self.assertRaises(ValueError):self.e.claim(1,101,'button')
-  self.e.claim(1,101,'button',[999]);self.s.verify(1,101,False,1);self.assertFalse(self.s.linked(1,101,[999]));self.s.verify(1,101,True,1);self.assertTrue(self.s.linked(1,101));self.assertFalse(self.s.linked(2,101))
+ def test_api_link_cache_ignores_old_roles_and_manual_records(self):
+  self.c['allow_unlinked']=False;self.s.save(1,self.c)
+  self.s.db.execute('INSERT INTO links VALUES(1,101,1,1)')
+  with self.assertRaises(ValueError):self.e.claim(1,101,'button',[999])
+  self.s.cache_api_link(1,101,True);self.e.claim(1,101,'button');self.assertTrue(self.s.linked(1,101));self.assertFalse(self.s.linked(2,101))
+  self.s.db.execute('UPDATE api_links SET checked=0');self.assertFalse(self.s.linked(1,101))
  def test_all_instant_games(self):
   for n,g in enumerate(INSTANT):
    r=self.e.start(1,101,g,'base','points',str(n))
@@ -102,9 +104,11 @@ class Rules(unittest.TestCase):
  def test_webhook_live_only_and_payment_replay(self):
   self.c.update(purchase_store_id=77);self.c['products']={'104':10};self.s.save(1,self.c);p=Purchases(self.s,self.e,'x'*64);data={'event':'payment.success','mode':'live','store_id':77,'data':{'id':123,'type':1,'user':{'discord_id':'101'},'basket':[{'id':'104','quantity':'2'}]}}
   self.assertEqual(p.process(data)['credited'],20);data['request_id']='resend';self.assertEqual(p.process(data)['credited'],0);data['mode']='test';self.assertEqual(p.process(data)['status'],'ignored')
- def test_parser_and_input_validation(self):
-  self.assertEqual(parser_command(101,1,30,{'kind':'kit','name':'streak5','quantity':1}),'[KAOS][ADD][<@101>][1]=[KIT][streak5][1] <@30>')
-  with self.assertRaises(ValueError):parser_command(101,1,30,{'kind':'kit','name':'kit][POINTS][10000','quantity':1})
+ def test_api_payload_and_input_validation(self):
+  row={'guild':1,'uid':101,'id':'reward1','config':json.dumps({'server_id':1}),'payload':json.dumps({'kind':'kit','name':'streak5','quantity':1})}
+  path,body=reward_request(row);self.assertEqual(path,'/v1/1/1/bank/kit');self.assertEqual(body['kit'],'streak5');self.assertEqual(body['uid'],'101')
+  row['payload']=json.dumps({'kind':'kit','name':'kit][POINTS][10000','quantity':1})
+  with self.assertRaises(ValueError):reward_request(row)
   c=defaults();c['games']['rps']['odds']['base']=[50,50,1]
   with self.assertRaises(ValueError):validate(c)
  def test_refund_rounding(self):

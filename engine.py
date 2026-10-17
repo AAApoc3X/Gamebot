@@ -31,7 +31,7 @@ class Engine:
    c=self.s.cfg(guild);d=c['daily'];now=self.clock()
    if not c['enabled']:raise ValueError('Games are paused.')
    if d['method'] not in ('both',method):raise ValueError('This daily-claim method is disabled.')
-   if not c['allow_unlinked'] and not self.s.linked(guild,uid,roles):raise ValueError('KAOS-linked players only. Ask staff to verify your KAOS link.')
+   if not c['allow_unlinked'] and not self.s.linked(guild,uid,roles):raise ValueError('KAOS-linked players only. Complete KAOS /link, then use /link_check to refresh your status.')
    r=self.s.db.execute('SELECT claimed FROM claims WHERE guild=? AND uid=?',(guild,uid)).fetchone()
    if r:
     same=(now-r[0]<86400) if d['reset']=='24h' else datetime.fromtimestamp(now,ZoneInfo(c['timezone'])).date()==datetime.fromtimestamp(r[0],ZoneInfo(c['timezone'])).date()
@@ -42,7 +42,7 @@ class Engine:
  def eligibility(self,guild,uid,roles=()):
   c=self.s.cfg(guild)
   if not c['enabled']:raise ValueError('Games are paused.')
-  if not c['allow_unlinked'] and not self.s.linked(guild,uid,roles):raise ValueError('KAOS-linked players only. Ask staff to verify your KAOS link.')
+  if not c['allow_unlinked'] and not self.s.linked(guild,uid,roles):raise ValueError('KAOS-linked players only. Complete KAOS /link, then use /link_check to refresh your status.')
   return c
  def kind(self,c,choice):
   if c['reward_mode']!='both':return c['reward_mode']
@@ -61,8 +61,8 @@ class Engine:
   if payload:
    for index,p in enumerate(payload):
     self.s.db.execute('INSERT OR IGNORE INTO rewards(id,guild,uid,tier,config,kind,payload,status,channel,created) VALUES(?,?,?,?,?,?,?,?,?,?)',
-    (f'{key}:{index}',guild,uid,tier,json.dumps(c),kind,json.dumps(p),status,c['transactions_channel'],self.clock()))
-  else:self.s.db.execute('INSERT OR IGNORE INTO rewards(id,guild,uid,tier,config,kind,payload,status,channel,created) VALUES(?,?,?,?,?,?,?,?,?,?)',(key,guild,uid,tier,json.dumps(c),kind,'[]',status,c['transactions_channel'],self.clock()))
+    (f'{key}:{index}',guild,uid,tier,json.dumps(c),kind,json.dumps(p),status,0,self.clock()))
+  else:self.s.db.execute('INSERT OR IGNORE INTO rewards(id,guild,uid,tier,config,kind,payload,status,channel,created) VALUES(?,?,?,?,?,?,?,?,?,?)',(key,guild,uid,tier,json.dumps(c),kind,'[]',status,0,self.clock()))
  def choose_reward(self,guild,uid,key,choice):
   with self.s.atomic():
    r=self.s.db.execute('SELECT * FROM rewards WHERE id=? AND guild=? AND uid=? AND status="choice"',(key,guild,uid)).fetchone()

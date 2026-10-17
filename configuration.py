@@ -9,9 +9,9 @@ GAMES=INSTANT+INTERACTIVE
 
 def defaults():
  return {'currency':'Tickets','timezone':'America/New_York','enabled':False,'delivery_enabled':False,
- 'allow_unlinked':False,'linked_role':0,'staff_role':0,'games_channel':0,'daily_channel':0,
- 'results_channel':0,'admin_channel':0,'transactions_channel':0,'purchase_store_id':0,
- 'kaos_bot_id':0,'server_id':1,'choice_timing':'entry','reward_mode':'both','transfers_enabled':True,
+ 'allow_unlinked':False,'staff_role':0,'games_channel':0,'daily_channel':0,
+ 'results_channel':0,'admin_channel':0,'purchase_store_id':0,
+ 'server_id':1,'choice_timing':'entry','reward_mode':'both','transfers_enabled':True,
  'daily':{'amount':1,'reset':'midnight','method':'both'},
  'games':{g:{'enabled':True,'costs':{'base':1,'elite':3,'premium':5},
  'odds':{'base':[80,18,2],'elite':[60,33,7],'premium':[40,45,15]},
@@ -55,7 +55,7 @@ def validate(c):
  shape(c,defaults())
  if not 1<=len(c['currency'])<=30 or not c['currency'].isprintable():raise ValueError('Currency name must contain 1–30 printable characters.')
  ZoneInfo(c['timezone'])
- for k in ('games_channel','daily_channel','results_channel','admin_channel','transactions_channel','kaos_bot_id','linked_role','staff_role','purchase_store_id'):integer(c[k],0,2**64-1,k)
+ for k in ('games_channel','daily_channel','results_channel','admin_channel','staff_role','purchase_store_id'):integer(c[k],0,2**64-1,k)
  integer(c['server_id'],1,100,'KAOS server ID')
  if c['reward_mode'] not in ('kits','points','both') or c['choice_timing'] not in ('entry','after'):raise ValueError('reward_mode kits/points/both; choice_timing entry/after.')
  da=c['daily'];integer(da['amount'],1,1000000,'Daily amount')
@@ -103,8 +103,7 @@ def validate(c):
   if not re.fullmatch(r'[A-Za-z0-9_-]{1,50}',k):raise ValueError('Product code must use letters, digits, underscore or hyphen.')
   integer(v,1,1000000,'Tickets per product')
  if c['enabled'] or c['delivery_enabled']:
-  if not all(c[k] for k in ('games_channel','transactions_channel','kaos_bot_id')):raise ValueError('Set games channel, Transactions channel and KAOS bot ID first.')
-  if c['games_channel']==c['transactions_channel']:raise ValueError('Games and Transactions channels must differ.')
+  if not c['games_channel']:raise ValueError('Set the Games channel first.')
   if c['reward_mode'] in ('kits','both') and any(not c['prizes'][t]['kits'] for t in TIERS):raise ValueError('Add kit/item alternatives to all three tiers, or select points-only rewards.')
  return c
 
@@ -125,3 +124,9 @@ def patch(c,section,value):
  elif section in ('daily','lottery','bingo','giveaway','products'):n[section]=value
  else:raise ValueError('Unknown configuration section.')
  return validate(n)
+
+LEGACY_FIELDS=('transactions_channel','kaos_bot_id','linked_role')
+def normalize(c):
+ n=deepcopy(c)
+ for key in LEGACY_FIELDS:n.pop(key,None)
+ return n

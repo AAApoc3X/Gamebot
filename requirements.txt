@@ -1,3 +1,4 @@
 discord.py>=2.6,<3
 aiohttp>=3.10,<4
 tzdata>=2025.1
+cryptography>=43,<51

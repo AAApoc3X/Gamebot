@@ -1,0 +1,15 @@
+CREATE TABLE audit(id INTEGER PRIMARY KEY,guild INTEGER,actor INTEGER,action TEXT,detail TEXT,created REAL);
+CREATE TABLE checkpoints(guild INTEGER PRIMARY KEY,message INTEGER);
+CREATE TABLE claims(guild INTEGER,uid INTEGER,claimed REAL,PRIMARY KEY(guild,uid));
+CREATE TABLE communities(guild INTEGER PRIMARY KEY,config TEXT NOT NULL);
+CREATE TABLE draws(id TEXT PRIMARY KEY,guild INTEGER,type TEXT,state TEXT,status TEXT,due REAL,created REAL,announced INTEGER DEFAULT 0,reminded INTEGER DEFAULT 0);
+CREATE TABLE entries(id TEXT PRIMARY KEY,draw TEXT REFERENCES draws(id),uid INTEGER,numbers TEXT,cost INTEGER,kind TEXT,UNIQUE(draw,uid,numbers));
+CREATE TABLE ledger(id INTEGER PRIMARY KEY,guild INTEGER,uid INTEGER,delta INTEGER,reason TEXT,reference TEXT UNIQUE,created REAL);
+CREATE TABLE links(guild INTEGER,uid INTEGER,verified INTEGER,actor INTEGER,PRIMARY KEY(guild,uid));
+CREATE TABLE panels(guild INTEGER,type TEXT,channel INTEGER,message INTEGER,PRIMARY KEY(guild,type));
+CREATE TABLE purchases(reference TEXT PRIMARY KEY,guild INTEGER,uid INTEGER,amount INTEGER,created REAL);
+CREATE TABLE rewards(id TEXT PRIMARY KEY,guild INTEGER,uid INTEGER,tier TEXT,config TEXT,kind TEXT,payload TEXT,status TEXT,channel INTEGER,message INTEGER,detail TEXT DEFAULT '',created REAL,checked REAL DEFAULT 0);
+CREATE TABLE sessions(id TEXT PRIMARY KEY,guild INTEGER,uid INTEGER,game TEXT,state TEXT,status TEXT,created REAL,updated REAL);
+CREATE TABLE wallets(guild INTEGER,uid INTEGER,balance INTEGER NOT NULL CHECK(balance>=0 AND balance<=1000000000000),PRIMARY KEY(guild,uid));
+CREATE UNIQUE INDEX one_active_game ON sessions(guild,uid) WHERE status='active';
+CREATE UNIQUE INDEX one_open_draw ON draws(guild,type) WHERE status='open';

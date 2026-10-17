@@ -8,8 +8,9 @@ from discord.ext import commands,tasks
 from aiohttp import web
 from storage import Store
 from engine import Engine,ident,lottery_probabilities
-from configuration import defaults,patch,validate,TIERS,GAMES,INSTANT,refund
+from configuration import defaults,patch,validate,normalize,TIERS,GAMES,INSTANT,refund
 from delivery import Delivery
+from kaos_api import KaosAPI,KeyVault,APIError
 from purchases import Purchases
 ROOT=Path(__file__).resolve().parent
 log=logging.getLogger('games')
@@ -28,6 +29,19 @@ RULES={
 async def reply(i,text,**kw):
  if i.response.is_done():return await i.followup.send(text,ephemeral=True,allowed_mentions=discord.AllowedMentions.none(),**kw)
  return await i.response.send_message(text,ephemeral=True,allowed_mentions=discord.AllowedMentions.none(),**kw)
+async def edit_message(i,**kw):
+ if i.response.is_done():return await i.edit_original_response(**kw)
+ return await i.response.edit_message(**kw)
+async def ensure_link(i,required=None,force=False,uid=None):
+ c=i.client.store.cfg(i.guild_id);target=uid or i.user.id
+ if required is None:required=not c['allow_unlinked']
+ if not required:return True
+ if not force and i.client.store.linked(i.guild_id,target):return True
+ if not i.response.is_done():await i.response.defer(ephemeral=True,thinking=True)
+ linked=await i.client.kaos.link(i.guild_id,target,force=force)
+ if not linked:raise ValueError('This player is not KAOS-linked. Complete KAOS /link, then try again.')
+ return True
+
 def file_json(name,data):return discord.File(io.BytesIO(json.dumps(data,indent=2).encode()),filename=name)
 def roles(i):return [r.id for r in getattr(i.user,'roles',[])]
 def guard(i,owner=False,player=False,daily=False):
@@ -61,7 +75,7 @@ class Confirm(SafeView):
  @discord.ui.button(label='Cancel',style=discord.ButtonStyle.secondary)
  async def cancel(self,i,b):
   if self.busy:await reply(i,'Already processing; check the result before taking another action.');return
-  self.busy=True;self.stop();await i.response.edit_message(content='Cancelled. No new action taken.',view=None)
+  self.busy=True;self.stop();await edit_message(i,content='Cancelled. No new action taken.',view=None)
 
 class SessionView(SafeView):
  def __init__(self,bot,r):
@@ -79,13 +93,13 @@ class SessionView(SafeView):
     # Result and rewards commit before animation; retries cannot change the roll.
     r=self.bot.engine.move(i.guild_id,i.user.id,self.key,action)
     if game=='rps':
-     await i.response.edit_message(content='Your choice is locked. **3...**',view=None,attachments=[])
+     await edit_message(i,content='Your choice is locked. **3...**',view=None,attachments=[])
      await asyncio.sleep(1);await i.edit_original_response(content='**2...**');await asyncio.sleep(1);await i.edit_original_response(content='**1...**');await asyncio.sleep(1)
      await i.edit_original_response(content=f'You chose **{action.title()}**.');await asyncio.sleep(.6)
      st=r['state'];winner=st['player'] if st['result']=='win'else st['bot']
      asset=ROOT/'assets'/('draw.gif'if st['result']=='draw'else winner+'.gif')
      await i.edit_original_response(content=render_session(r),attachments=[discord.File(asset)]if asset.exists()else [],view=None)
-    else:await i.response.edit_message(content=render_session(r),view=SessionView(self.bot,r),attachments=[])
+    else:await edit_message(i,content=render_session(r),view=SessionView(self.bot,r),attachments=[])
    btn.callback=click;self.add_item(btn)
 
 def render_session(r):
@@ -106,7 +120,7 @@ def render_session(r):
  return text
 
 async def review_game(i,game,level,kind):
- c=guard(i,player=True);i.client.engine.eligibility(i.guild_id,i.user.id,roles(i));g=c['games'][game];cost=g['costs'][level]
+ c=guard(i,player=True);await ensure_link(i);i.client.engine.eligibility(i.guild_id,i.user.id,roles(i));g=c['games'][game];cost=g['costs'][level]
  odds=g['odds'][level];desc=RULES.get(game,'Reveal a guaranteed Base, Elite or Premium prize using the displayed tier odds.')
  text=f'**{GAME_LABELS[game]} · {level.title()}**\nCost: **{cost} {c["currency"]}**\n{desc}\n'
  if game=='rps':text+=f'Win: {level.title()} prize. Loss return: {refund(cost,g["loss_return"])}. Draw return: {refund(cost,g["draw_return"])} {c["currency"]}.\n'
@@ -115,10 +129,10 @@ async def review_game(i,game,level,kind):
  # Snapshot hash prevents a configuration change between displayed cost and confirmation.
  frozen=json.dumps(c,sort_keys=True)
  async def accept(j):
-  guard(j,player=True)
+  guard(j,player=True);await ensure_link(j)
   if json.dumps(j.client.store.cfg(j.guild_id),sort_keys=True)!=frozen:raise ValueError('Settings changed. Open the game again to review the new cost and odds.')
   r=j.client.engine.start(j.guild_id,j.user.id,game,level,kind,'game:'+str(j.id),roles(j))
-  await j.response.edit_message(content=render_session(r),view=SessionView(j.client,r))
+  await edit_message(j,content=render_session(r),view=SessionView(j.client,r))
  await reply(i,text,view=Confirm(i.user.id,accept),file=file_json('prize-rules.json',{'prizes':c['prizes'],'game':g,'reward_mode':c['reward_mode'],'choice_timing':c['choice_timing']}))
 
 class Lobby(SafeView):
@@ -139,7 +153,7 @@ class Panel(SafeView):
    btn=discord.ui.Button(label=label,style=discord.ButtonStyle.primary,custom_id='gamespanel:'+action)
    async def click(i,action=action):
     if action=='daily':
-     c=guard(i,player=True,daily=True);amount=i.client.engine.claim(i.guild_id,i.user.id,'button',roles(i));await reply(i,f'Claimed **{amount} {c["currency"]}**.')
+     c=guard(i,player=True,daily=True);await ensure_link(i);amount=i.client.engine.claim(i.guild_id,i.user.id,'button',roles(i));await reply(i,f'Claimed **{amount} {c["currency"]}**.')
     elif action=='lobby':guard(i,player=True);await reply(i,'Choose a game, entry level and reward type, then review the cost.',view=Lobby(i.user.id))
     elif action=='balance':guard(i,player=True);await reply(i,f'Balance: **{i.client.store.balance(i.guild_id,i.user.id)} {i.client.store.cfg(i.guild_id)["currency"]}**.')
     elif action=='prizes':await show_prizes(i)
@@ -177,10 +191,20 @@ async def show_events(i):
    async def join(j,key=r['id'],kind=kind):
     c=guard(j,player=True);d=j.client.engine.draw(key);spec=d['state']['config']['bingo'];cost=spec['cost']if d['type']=='bingo'else 0
     async def confirm(k):
-     guard(k,player=True);nums=k.client.engine.join_event(k.guild_id,k.user.id,key,kind,'event:'+str(k.id),roles(k));await k.response.edit_message(content='Entered. '+('Your bingo card: '+', '.join(map(str,nums))if nums else 'Good luck!'),view=None)
+     guard(k,player=True);await ensure_link(k,required=(not c['allow_unlinked'] or not d['state']['config']['allow_unlinked']));nums=k.client.engine.join_event(k.guild_id,k.user.id,key,kind,'event:'+str(k.id),roles(k));await edit_message(k,content='Entered. '+('Your bingo card: '+', '.join(map(str,nums))if nums else 'Good luck!'),view=None)
     await reply(j,f'Join {d["type"]} for **{cost} {c["currency"]}**? '+('Winner tier '+spec['winner_tier']+'; all other entrants receive '+spec['participation_tier']+'. Reward: '+kind+'. Card completes on a row, column or diagonal.'if cost else 'Free entry; ticket winners are selected randomly at closing.'),view=Confirm(j.user.id,confirm))
    btn.callback=join;v.add_item(btn)
  await reply(i,'**Open events**\n'+'\n'.join(f'{r["type"].title()} · closes <t:{int(r["due"])}:R> · `{r["id"]}`'for r in rs),view=v)
+
+class APIKeyModal(discord.ui.Modal):
+ def __init__(self):
+  super().__init__(title='Connect this community to KAOS')
+  self.key=discord.ui.TextInput(label='KAOS API key (not your Discord bot token)',min_length=10,max_length=4096,style=discord.TextStyle.paragraph);self.add_item(self.key)
+ async def on_submit(self,i):
+  try:
+   guard(i,owner=True);await i.response.defer(ephemeral=True);token=str(self.key).strip();await i.client.kaos.check(i.guild_id,token=token);i.client.kaos.vault.save(i.guild_id,token,i.user.id);await reply(i,'Community API key validated and saved encrypted. It is not included in reports or configuration exports. Configure prizes, test and enable delivery.')
+  except ValueError as exc:await reply(i,str(exc))
+  finally:self.key.default=None
 
 class ConfigModal(discord.ui.Modal):
  def __init__(self,section,value):
@@ -196,7 +220,7 @@ class GamesBot(commands.Bot):
  def __init__(self,path=None):
   intents=discord.Intents.default();intents.message_content=False
   super().__init__(command_prefix=commands.when_mentioned,intents=intents,allowed_mentions=discord.AllowedMentions.none())
-  self.store=Store(path or Path(os.getenv('DATA_DIR',str(ROOT/'data')))/'games.sqlite3');self.engine=Engine(self.store);self.delivery=Delivery(self,self.store);self.http_runner=None
+  self.store=Store(path or Path(os.getenv('DATA_DIR',str(ROOT/'data')))/'games.sqlite3');self.engine=Engine(self.store);self.kaos=KaosAPI(self.store);self.delivery=Delivery(self,self.store,self.kaos);self.http_runner=None
  async def setup_hook(self):
   self.add_view(Panel('games'));self.add_view(Panel('daily'))
   guild_id=os.getenv('DISCORD_GUILD_ID')
@@ -209,7 +233,7 @@ class GamesBot(commands.Bot):
  async def close(self):
   self.worker.cancel()
   if self.http_runner:await self.http_runner.cleanup()
-  await super().close();self.store.close()
+  await self.kaos.close();await super().close();self.store.close()
  async def on_ready(self):log.info('Games bot ready as %s',self.user)
  @tasks.loop(seconds=3)
  async def worker(self):
@@ -253,7 +277,7 @@ def attach_commands(bot):
  async def play(i:discord.Interaction,game:GameName,level:Level='base',reward:Kind='kits'):await review_game(i,game,level,reward)
  @bot.tree.command(name='daily',description='Claim your daily tickets in the Daily claim channel')
  async def daily(i:discord.Interaction):
-  c=guard(i,player=True,daily=True);n=bot.engine.claim(i.guild_id,i.user.id,'command',roles(i));await reply(i,f'Claimed **{n} {c["currency"]}**.')
+  c=guard(i,player=True,daily=True);await ensure_link(i);n=bot.engine.claim(i.guild_id,i.user.id,'command',roles(i));await reply(i,f'Claimed **{n} {c["currency"]}**.')
  @bot.tree.command(name='balance',description='See your ticket balance')
  async def balance(i:discord.Interaction):c=guard(i,player=True);await reply(i,f'Balance: **{bot.store.balance(i.guild_id,i.user.id)} {c["currency"]}**.')
  @bot.tree.command(name='give',description='Give tickets to another player with confirmation')
@@ -261,7 +285,7 @@ def attach_commands(bot):
   c=guard(i,player=True)
   if player.bot:raise ValueError('Choose a human player.')
   async def accept(j):
-   guard(j,player=True);bot.store.transfer(j.guild_id,j.user.id,player.id,amount,'transfer:'+str(j.id));await j.response.edit_message(content=f'Transferred {amount} {c["currency"]} to {player.display_name}.',view=None,allowed_mentions=discord.AllowedMentions.none())
+   guard(j,player=True);bot.store.transfer(j.guild_id,j.user.id,player.id,amount,'transfer:'+str(j.id));await edit_message(j,content=f'Transferred {amount} {c["currency"]} to {player.display_name}.',view=None,allowed_mentions=discord.AllowedMentions.none())
   await reply(i,f'Give **{amount} {c["currency"]}** to **{player.display_name}**?',view=Confirm(i.user.id,accept))
  @bot.tree.command(name='resume',description='Resume your unfinished game after a disconnect')
  async def resume(i:discord.Interaction):
@@ -288,22 +312,31 @@ def attach_commands(bot):
   if not r:raise ValueError('No open lottery.')
   draw=bot.engine.draw(r[0]);lo=draw['state']['config']['lottery'];prob=lottery_probabilities(lo['min'],lo['max'],combinations)
   async def accept(j):
-   guard(j,player=True);picks=bot.engine.lottery_enter(j.guild_id,j.user.id,r[0],combinations,numbers,reward,'lotteryentry:'+str(j.id),roles(j));await j.response.edit_message(content='Entered draw `'+r[0]+'`. Your numbers:\n'+'\n'.join(', '.join(map(str,x))for x in picks),view=None)
+   guard(j,player=True);await ensure_link(j,required=(not bot.store.cfg(j.guild_id)['allow_unlinked'] or not draw['state']['config']['allow_unlinked']));picks=bot.engine.lottery_enter(j.guild_id,j.user.id,r[0],combinations,numbers,reward,'lotteryentry:'+str(j.id),roles(j));await edit_message(j,content='Entered draw `'+r[0]+'`. Your numbers:\n'+'\n'.join(', '.join(map(str,x))for x in picks),view=None)
   await reply(i,f'Buy **{combinations} combinations** for **{lo["bundles"].get(str(combinations),combinations*lo["cost"])} {c["currency"]}**?\nPicks: {numbers or "Quick Pick"}\nPayout: {lo["payout"]}; reward: {reward if draw["state"]["config"]["choice_timing"]=="entry" else "choose after winning"}.\n1/2/3 matches: '+', '.join(lo['reward_tiers'][str(k)]for k in (1,2,3))+f'. Zero-match return: {json.dumps(lo["zero_return"])}.\nChance of all three numbers across these new unique combinations: {prob["premium_any"]:.6%}. Lower match odds depend on overlap between your combinations.',view=Confirm(i.user.id,accept),file=file_json('lottery-prize-rules.json',draw['state']['config']['prizes']))
  @lottery.command(name='entries',description='See your combinations in the current lottery')
  async def entries(i:discord.Interaction):
   guard(i,player=True);rs=[dict(r)for r in bot.store.db.execute('SELECT entries.* FROM entries JOIN draws ON entries.draw=draws.id WHERE draws.guild=? AND entries.uid=? AND draws.type="lottery" ORDER BY draws.created DESC LIMIT 1000',(i.guild_id,i.user.id))];await reply(i,'Your latest lottery entries.',file=file_json('lottery-entries.json',rs))
- @admin.command(name='setup',description='Owner selects Games, Daily claim, Transactions and admin channels')
- @app_commands.describe(games_channel='Channel where members play games and run game commands',daily_channel='Channel with daily ticket button and/or daily claim command',transactions_channel='KAOS Transactions channel for in-game kit, item and points commands',kaos_bot='Select the actual KAOS bot member',server_id='KAOS game server number: S1 = 1, S2 = 2',results_channel='Channel for lottery numbers and community event results',admin_channel='Private channel for owner and authorized staff commands')
- async def setup(i:discord.Interaction,games_channel:discord.TextChannel,daily_channel:discord.TextChannel,transactions_channel:discord.TextChannel,kaos_bot:discord.Member,results_channel:discord.TextChannel,admin_channel:discord.TextChannel,server_id:app_commands.Range[int,1,100]=1,linked_role:Optional[discord.Role]=None):
+ @admin.command(name='setup',description='Owner selects Games, Daily claim, results and admin channels')
+ @app_commands.describe(games_channel='Channel where members play games and run game commands',daily_channel='Channel with the free daily claim button and/or daily command',server_id='KAOS game server number: S1 = 1, S2 = 2; not your Discord server ID',results_channel='Channel for lottery numbers and community event results',admin_channel='Private channel for owner and authorized staff commands')
+ async def setup(i:discord.Interaction,games_channel:discord.TextChannel,daily_channel:discord.TextChannel,results_channel:discord.TextChannel,admin_channel:discord.TextChannel,server_id:app_commands.Range[int,1,100]=1):
   guard(i,owner=True)
-  if not kaos_bot.bot:raise ValueError('Select the actual KAOS bot, not a person.')
-  if transactions_channel.id in (games_channel.id,daily_channel.id,results_channel.id):raise ValueError('Keep Transactions separate from public channels.')
-  for ch in (games_channel,daily_channel,transactions_channel,results_channel,admin_channel):
-   p=ch.permissions_for(i.guild.me)
-   if not(p.view_channel and p.send_messages and p.read_message_history):raise ValueError(f'Bot needs View Channel, Send Messages and Read Message History in {ch.name}.')
-   if ch in (games_channel,admin_channel) and not(p.attach_files and p.embed_links):raise ValueError(f'Bot needs Attach Files and Embed Links in {ch.name}.')
-  c=bot.store.cfg(i.guild_id);c.update(games_channel=games_channel.id,daily_channel=daily_channel.id,transactions_channel=transactions_channel.id,kaos_bot_id=kaos_bot.id,results_channel=results_channel.id,admin_channel=admin_channel.id,server_id=server_id,linked_role=linked_role.id if linked_role else 0);bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Channels saved. Games and delivery remain at their existing enabled/paused settings. Configure prizes and participation, test delivery, then enable.')
+  for ch in (games_channel,daily_channel,results_channel,admin_channel):
+   permissions=ch.permissions_for(i.guild.me)
+   if not(permissions.view_channel and permissions.send_messages and permissions.read_message_history):raise ValueError(f'Bot needs View Channel, Send Messages and Read Message History in {ch.name}.')
+   if ch in (games_channel,admin_channel) and not(permissions.attach_files and permissions.embed_links):raise ValueError(f'Bot needs Attach Files and Embed Links in {ch.name}.')
+  c=bot.store.cfg(i.guild_id);c.update(games_channel=games_channel.id,daily_channel=daily_channel.id,results_channel=results_channel.id,admin_channel=admin_channel.id,server_id=server_id);bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Channels saved. Use /gamesadmin api to connect this community’s KAOS API key. Transactions channel and parser settings are not used.')
+ @admin.command(name='api',description='Owner connects, checks or removes this community’s KAOS API key')
+ async def api(i:discord.Interaction,action:Literal['set','check','remove']='check'):
+  guard(i,owner=True)
+  if action=='set':
+   if os.getenv(f'KAOS_API_KEY_{i.guild_id}') or (os.getenv('KAOS_API_GUILD_ID')==str(i.guild_id)and os.getenv('KAOS_API_KEY')):raise ValueError('This community key is managed in Railway Variables. Ask the host to replace it there.')
+   bot.kaos.vault.cipher();await i.response.send_modal(APIKeyModal());return
+  if action=='check':
+   await i.response.defer(ephemeral=True);await bot.kaos.check(i.guild_id);await reply(i,'KAOS API key is valid for this community. Needed permissions: links:read; bank:kit for kits; bank:item for items; economy:credit for points. Test each reward type you use; whoami alone does not prove write permissions.');return
+  async def accept(j):
+   guard(j,owner=True);bot.kaos.vault.delete(j.guild_id,j.user.id);c=bot.store.cfg(j.guild_id);c['delivery_enabled']=False;bot.store.save(j.guild_id,c,j.user.id);await edit_message(j,content='Stored community key removed and delivery paused. Host-managed environment keys must be removed in Railway separately.',view=None)
+  await reply(i,'Remove this community’s stored API key and pause its delivery?',view=Confirm(i.user.id,accept))
  @admin.command(name='configure',description='Owner edits validated settings for a game, prizes or community controls')
  @app_commands.describe(section='general, daily, lottery, bingo, giveaway, products, game:rps, prize:base, etc.')
  async def configure(i:discord.Interaction,section:str):
@@ -323,12 +356,15 @@ def attach_commands(bot):
  async def import_config(i:discord.Interaction,file:discord.Attachment):
   guard(i,owner=True)
   if file.size>100000:raise ValueError('Configuration maximum 100 KB.')
-  await i.response.defer(ephemeral=True);c=json.loads(await file.read());validate(c)
-  async def accept(j):guard(j,owner=True);bot.store.save(j.guild_id,c,j.user.id);await j.response.edit_message(content='Configuration replaced. Existing game and draw rules are preserved.',view=None)
+  await i.response.defer(ephemeral=True);c=normalize(json.loads(await file.read()));validate(c)
+  async def accept(j):guard(j,owner=True);bot.store.save(j.guild_id,c,j.user.id);await edit_message(j,content='Configuration replaced. Existing game and draw rules are preserved.',view=None)
   await reply(i,'Replace all settings using this validated file?',view=Confirm(i.user.id,accept))
  @admin.command(name='enable',description='Owner separately enables or pauses new games and in-game delivery')
  async def enable(i:discord.Interaction,games:bool,delivery:bool):
-  guard(i,owner=True);c=bot.store.cfg(i.guild_id);c.update(enabled=games,delivery_enabled=delivery);bot.store.save(i.guild_id,c,i.user.id);await reply(i,f'New games: {games}. KAOS delivery: {delivery}. Open paid draws and active games still settle.')
+  guard(i,owner=True)
+  if delivery:
+   await i.response.defer(ephemeral=True);await bot.kaos.check(i.guild_id)
+  c=bot.store.cfg(i.guild_id);c.update(enabled=games,delivery_enabled=delivery);bot.store.save(i.guild_id,c,i.user.id);await reply(i,f'New games: {games}. KAOS delivery: {delivery}. Open paid draws and active games still settle.')
  @admin.command(name='panel',description='Post or update the Games menu or Daily claim button')
  async def panel(i:discord.Interaction,type:Literal['games','daily']):
   c=guard(i,owner=True);channel=i.guild.get_channel(c['games_channel'if type=='games'else 'daily_channel'])
@@ -345,11 +381,11 @@ def attach_commands(bot):
   guard(i)
   if player.bot or amount==0:raise ValueError('Choose a person and a nonzero amount.')
   async def accept(j):
-   guard(j);bot.store.money(j.guild_id,player.id,amount,'Staff: '+reason[:200],'staff:'+str(j.id));bot.store.audit(j.guild_id,j.user.id,'tickets',f'{player.id}: {amount}; {reason[:200]}');await j.response.edit_message(content=f'Balance adjusted by {amount}.',view=None)
+   guard(j);bot.store.money(j.guild_id,player.id,amount,'Staff: '+reason[:200],'staff:'+str(j.id));bot.store.audit(j.guild_id,j.user.id,'tickets',f'{player.id}: {amount}; {reason[:200]}');await edit_message(j,content=f'Balance adjusted by {amount}.',view=None)
   await reply(i,f'Adjust {player.display_name} by **{amount} tickets**? Reason: {reason[:200]}',view=Confirm(i.user.id,accept))
- @admin.command(name='verify_link',description='Owner records a KAOS link after checking it in KAOS')
- async def verify_link(i:discord.Interaction,player:discord.Member,linked:bool):
-  guard(i,owner=True);bot.store.verify(i.guild_id,player.id,linked,i.user.id);await reply(i,'Link verification recorded. This does not create a KAOS link; verify their actual /link in KAOS first. Explicit false overrides the linked role.')
+ @bot.tree.command(name='link_check',description='Check your KAOS link or another player’s link through the API')
+ async def link_check(i:discord.Interaction,player:Optional[discord.Member]=None):
+  guard(i,player=True);target=player or i.user;await i.response.defer(ephemeral=True);linked=await bot.kaos.link(i.guild_id,target.id,force=True);await reply(i,f'{target.display_name}: '+('KAOS-linked'if linked else 'Not linked. Complete KAOS /link.'))
  @admin.command(name='event',description='Owner opens, draws or cancels lottery, bingo and ticket giveaways')
  async def event(i:discord.Interaction,type:Literal['lottery','bingo','giveaway'],action:Literal['open','draw','cancel']):
   guard(i,owner=True)
@@ -362,16 +398,14 @@ def attach_commands(bot):
     if action=='cancel':bot.engine.cancel_draw(r[0]);result='Event cancelled. Entry costs refunded.'
     else:
      st=bot.engine.settle_lottery(r[0],True)if type=='lottery'else bot.engine.settle_event(r[0],True);result='Draw completed; rewards recorded. '+json.dumps({k:v for k,v in st.items()if k!='config'})[:1200]
-   bot.store.audit(j.guild_id,j.user.id,'event_'+action,type);await j.response.edit_message(content=result,view=None)
+   bot.store.audit(j.guild_id,j.user.id,'event_'+action,type);await edit_message(j,content=result,view=None)
   await reply(i,f'Confirm **{action} {type}**? Drawing settles all current entries. Cancelling refunds entry costs.',view=Confirm(i.user.id,accept))
  @admin.command(name='daily_settings',description='Owner sets daily ticket amount, reset schedule and claim method')
  async def daily_settings(i:discord.Interaction,amount:app_commands.Range[int,1,1000000],reset:Literal['midnight','24h']='midnight',method:Literal['button','command','both']='both',timezone:str='America/New_York'):
   guard(i,owner=True);c=bot.store.cfg(i.guild_id);c['daily']={'amount':amount,'reset':reset,'method':method};c['timezone']=timezone;bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Daily claim rules saved. Re-post/update the daily panel to refresh its description.')
  @admin.command(name='participation',description='Owner allows everyone or only verified KAOS-linked players')
- async def participation(i:discord.Interaction,allow_unlinked:bool,linked_role:Optional[discord.Role]=None):
-  guard(i,owner=True);c=bot.store.cfg(i.guild_id);c['allow_unlinked']=allow_unlinked
-  if linked_role:c['linked_role']=linked_role.id
-  bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Participation saved. In-game prizes always wait for a verified KAOS link before posting to Transactions.')
+ async def participation(i:discord.Interaction,allow_unlinked:bool):
+  guard(i,owner=True);c=bot.store.cfg(i.guild_id);c['allow_unlinked']=allow_unlinked;bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Participation saved. KAOS API checks player links. In-game prizes wait until the recipient is KAOS-linked.')
  @admin.command(name='currency',description='Owner renames tickets and controls player-to-player transfers')
  async def currency(i:discord.Interaction,name:str,allow_transfers:bool=True):
   guard(i,owner=True);c=bot.store.cfg(i.guild_id);c.update(currency=name,transfers_enabled=allow_transfers);bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Ticket name and transfer setting saved. Update the daily panel to refresh its text.')
@@ -400,36 +434,41 @@ def attach_commands(bot):
  async def report(i:discord.Interaction):
   guard(i);data={}
   for table in ('rewards','ledger','audit','draws'):
-   cols='id,uid,tier,kind,payload,status,channel,message,detail,created'if table=='rewards'else '*';data[table]=[dict(x)for x in bot.store.db.execute(f'SELECT {cols} FROM {table} WHERE guild=? ORDER BY '+('created DESC')+' LIMIT 2000',(i.guild_id,))]
-  await reply(i,'Community report. Sent means posted to KAOS, not confirmed in-game.',file=file_json('games-report.json',data))
+   cols='id,uid,tier,kind,payload,status,transport,attempts,detail,created'if table=='rewards'else '*';data[table]=[dict(x)for x in bot.store.db.execute(f'SELECT {cols} FROM {table} WHERE guild=? ORDER BY '+('created DESC')+' LIMIT 2000',(i.guild_id,))]
+  await reply(i,'Community report. Accepted means KAOS API success; kits/items go to the player bank. Legacy sent rows are old parser posts.',file=file_json('games-report.json',data))
  @admin.command(name='test',description='Owner previews and confirms one real tier prize without spending tickets')
  async def test(i:discord.Interaction,player:discord.Member,tier:Level,reward:Kind='points'):
   c=guard(i,owner=True)
   if player.bot:raise ValueError('Choose a person.')
   async def accept(j):
    guard(j,owner=True)
-   if not bot.store.linked(j.guild_id,player.id,[x.id for x in player.roles]):raise ValueError('Verify the player’s KAOS link first.')
-   if not c['transactions_channel']or not c['kaos_bot_id']:raise ValueError('Run setup first.')
+   await ensure_link(j,required=True,force=True,uid=player.id)
+   if not c['games_channel']:raise ValueError('Run setup first.')
    with bot.store.atomic():bot.engine.award(j.guild_id,player.id,tier,c,reward,'test:'+str(j.id));bot.store.audit(j.guild_id,j.user.id,'live_reward_test',f'{player.id} {tier} {reward}')
-   await j.response.edit_message(content='Real test reward queued. Enable delivery to send it; inspect /gamesadmin report and the player’s bank/balance.',view=None)
+   await edit_message(j,content='Real test reward queued. Enable delivery to send it; inspect /gamesadmin report and the player’s bank/balance.',view=None)
   await reply(i,f'Give a REAL **{tier} {reward}** prize to **{player.display_name}** on KAOS server **{c["server_id"]}**? No tickets charged.\nPrize settings: '+json.dumps(c['prizes'][tier])[:1200],view=Confirm(i.user.id,accept))
- @admin.command(name='delivery',description='Owner inspects or resolves a specific reward after checking KAOS Transactions')
- async def delivery(i:discord.Interaction,reward_id:str,action:Literal['inspect','reconcile','retry','mark_sent']='inspect'):
+ @admin.command(name='delivery',description='Owner inspects, retries failed API rewards or reviews legacy parser rewards')
+ async def delivery(i:discord.Interaction,reward_id:str,action:Literal['inspect','retry','legacy_reconcile','legacy_mark_sent','legacy_release']='inspect'):
   guard(i,owner=True);r=bot.store.db.execute('SELECT * FROM rewards WHERE guild=? AND id=?',(i.guild_id,reward_id)).fetchone()
   if not r:raise ValueError('Unknown reward ID.')
-  if action=='inspect':await reply(i,json.dumps({k:r[k]for k in ('id','uid','status','payload','channel','message','detail')})[:1900]);return
-  if action=='reconcile':
-   await i.response.defer(ephemeral=True);found=await bot.delivery.reconcile(i.guild,reward_id);await reply(i,'Original parser post found; marked sent.'if found else 'Not found in the last 1,000 messages. This does not prove it was never sent; inspect older history before retrying.');return
+  if action=='inspect':await reply(i,json.dumps({k:r[k]for k in ('id','uid','status','transport','payload','attempts','detail')})[:1900]);return
+  if action=='legacy_reconcile':
+   await i.response.defer(ephemeral=True);found=await bot.delivery.reconcile(i.guild,reward_id);await reply(i,'Original legacy parser post found; never replayed through API automatically.'if found else 'Not found in the last 1,000 messages. Inspect older history and KAOS before releasing a legacy reward.');return
   async def accept(j):
-   guard(j,owner=True);latest=bot.store.db.execute('SELECT status FROM rewards WHERE id=?',(reward_id,)).fetchone()[0]
-   if action=='retry':
-    if latest not in ('failed','uncertain'):raise ValueError('Only failed/uncertain sends can be retried. Sent rewards are never replayed automatically.')
-    bot.store.db.execute('UPDATE rewards SET status="pending",detail="Owner approved retry after review" WHERE id=?',(reward_id,))
-   else:
-    if latest not in ('uncertain','failed'):raise ValueError('Only uncertain or failed sends can be manually marked sent.')
-    bot.store.db.execute('UPDATE rewards SET status="sent",detail="Owner marked sent after review" WHERE id=?',(reward_id,))
-   bot.store.audit(j.guild_id,j.user.id,'delivery_'+action,reward_id);await j.response.edit_message(content='Delivery state updated.',view=None)
-  await reply(i,'Confirm '+action+'? Inspect the Transactions channel AND KAOS result first. Retrying a command KAOS already processed can duplicate the reward.',view=Confirm(i.user.id,accept))
+   guard(j,owner=True)
+   with bot.store.atomic():
+    row=bot.store.db.execute('SELECT * FROM rewards WHERE id=? AND guild=?',(reward_id,j.guild_id)).fetchone()
+    if action=='retry':
+     if row['transport']!='api' or row['status']!='failed':raise ValueError('Only failed API rewards can be retried. Accepted rewards are not resent.')
+     bot.store.db.execute('UPDATE rewards SET status="pending",next_attempt=0,detail="Owner retried API reward with original idempotency key" WHERE id=?',(reward_id,))
+    else:
+     if row['transport']!='legacy' or row['status']!='migration_hold':raise ValueError('Only held legacy parser rewards can be reviewed this way.')
+     if action=='legacy_release':bot.store.db.execute('UPDATE rewards SET transport="api",status="pending",next_attempt=0,detail="Owner verified old parser reward was not delivered; released to API" WHERE id=?',(reward_id,))
+     else:bot.store.db.execute('UPDATE rewards SET status="sent",detail="Owner marked old parser reward sent after review" WHERE id=?',(reward_id,))
+    bot.store.audit(j.guild_id,j.user.id,'delivery_'+action,reward_id)
+   await edit_message(j,content='Reward state updated.',view=None)
+  warning='Retry through the API with the original idempotency key?'if action=='retry'else 'Review KAOS and old Transactions history first. Release ONLY if the old parser reward was never processed; otherwise mark it sent. Cross-transport duplication cannot be prevented by an API idempotency key.'
+  await reply(i,warning,view=Confirm(i.user.id,accept))
  bot.tree.add_command(admin);bot.tree.add_command(lottery)
  @bot.tree.error
  async def error(i,exc):

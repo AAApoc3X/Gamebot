@@ -1,36 +1,34 @@
-# Games Bot validation
+# Games Bot KAOS API update validation
 
-Built October 16, 2026 for the separate Rust Console Games Bot.
+Updated October 17, 2026. This package replaces parser-based rewards with KAOS kapi_minor, matching the Kill Tracker approach.
 
-## Automated checks
+## Automated validation
 
-36 tests pass using local SQLite databases and simulated Discord/HTTP transports:
+46 tests pass, using local databases and simulated Discord, HTTP and KAOS responses.
 
-- Shared daily allowance between button and command; local-midnight and rolling 24-hour resets.
-- Wallet conservation, insufficient balance rollback and duplicate transfer protection.
-- Linked-role checks, explicit owner verification and community isolation.
-- All seven instant prize games and all four interactive games.
-- RPS prize tiers, invalid/repeated moves and another player's rejected actions.
-- Higher entry prize floors, frozen prize rules and single-use post-win reward selection.
-- Inactivity handling and full refund for unplayed RPS.
-- Lottery unique Quick Pick, invalid manual picks, entry limits and cutoff.
-- Lottery highest/each payouts, zero-match returns, exact bundle-cost cancellation refunds and repeat settlement rejection.
-- Calendar schedules over daylight saving and weekly boundaries; probability calculations.
-- Bingo, ticket giveaways and duplicate join rejection.
-- Purchase-level deduplication across resends; test-mode payment rejection; secret webhook authentication.
-- Parser formatting and bracket-injection rejection.
-- State retained after database restart.
-- Delayed unlinked delivery, successful send recording, paused delivery and ambiguous-send recovery.
-- Discord command payload serialization, persistent panels, interactive views and owner/member permissions.
+Retained game checks cover wallets, balance conservation, duplicate transfers, midnight/24-hour claims, all 11 games, game ownership, frozen prize rules, inactivity refunds, after-win choices, unique lottery picks, bundle refunds, cutoff windows, highest/each payouts, Bingo, giveaways, purchase deduplication, secret Tip4Serv authentication, daylight-saving schedules and restart persistence.
 
-Local compilation and Discord registration payload checks also pass. There are 32 executable slash commands, including 19 owner/staff commands under /gamesadmin and 3 lottery commands.
+API checks cover:
 
-Five original GIF files are included: rock, paper, scissors, draw and countdown. The three winning-action animations and draw graphics were inspected locally.
+- Community-scoped API-key selection; generic keys require explicit guild binding.
+- Encrypted community key storage; no key in settings export; wrong master-key failure.
+- Community route isolation and whoami scope mismatch rejection.
+- whoami request limits, 429 Retry-After and 5xx/network retry behavior.
+- UID-based link lookups, nested response formats, missing links and unknown/mismatched responses.
+- No stale positive eligibility after a failed forced lookup; no old role/manual fallback.
+- Correct points, kit and item routes/bodies and stable idempotency keys.
+- Repeated API attempts use identical reward body/key after a timeout.
+- Restart resumes API sending state; accepted rewards are not replayed.
+- Failed HTTP 4xx requires correction/manual retry; disabled delivery makes no request.
+- Discord payload serialization and revised setup fields, owner/member access, persistent panels and game views.
+- Exact original database schema migration preserves balances, pauses delivery, leaves old sent rewards alone, holds ambiguous parser records and safely converts unsent records. Reopening does not repeat migration or pause an already re-enabled API deployment.
 
-## Live checks still required
+Local compilation passes. The bot has 33 executable slash commands. Setup no longer accepts a Transactions channel, KAOS bot or linked role. API key entry and /link_check replace manual verify_link.
 
-No real Discord bot token, KAOS access or Tip4Serv store credentials were used. This package has not been deployed to your Railway project or uploaded to your GitHub account.
+## Operational verification still required
 
-After deployment, use OWNER_GUIDE.md section 8 to verify permissions, one real points reward, one existing kit, link verification, the game views/animations, a short lottery, Bingo and ticket giveaway. Validate one controlled live Tip4Serv purchase and its duplicate resend before using public purchases.
+No real Discord token or KAOS API key was used in these tests. The new code has not been uploaded to GitHub or deployed to the user's Railway service. A live link lookup and real points/kit/item test are required after deployment. KAOS response compatibility is checked conservatively; an unrecognized response holds eligibility rather than assuming a link.
 
-KAOS delivery reports indicate parser commands sent, not confirmed in-game delivery. A timeout/restart around a send requires owner inspection before retrying.
+See API_UPGRADE.md for deployment and migration steps. Preserve the existing /data volume. Existing Tip4Serv webhook behavior is retained and still needs a controlled live purchase check if not already verified.
+
+API accepted means the credit/bank endpoint returned success. It does not mean a kit/item was claimed into inventory. Legacy parser outcomes cannot be deduplicated using a new API key, so held legacy rewards require owner review before release.

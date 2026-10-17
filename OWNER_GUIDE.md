@@ -1,6 +1,6 @@
 # Rust Games Bot owner guide
 
-Use this guide after the separate Games Bot is online in your Discord community. Games and KAOS delivery start paused. Your existing Kill Tracker is separate and is not changed.
+Use this guide after the separate Games Bot is online in your Discord community. Games and KAOS API delivery start paused. Your existing Kill Tracker is separate and is not changed.
 
 ## 1 Set up channels
 
@@ -12,7 +12,6 @@ Create/select existing text channels with these purposes. Names are examples.
 | Daily claim channel | Daily claim button and/or `/daily` | View Channel, Read Message History; allow Send Messages and Use Application Commands if using `/daily` | View Channel, Send Messages, Read Message History |
 | Results channel | Lottery numbers, Bingo and giveaway results | View Channel, Read Message History; can deny posting | View Channel, Send Messages, Read Message History |
 | Admin channel | Private owner/staff controls | Deny View Channel to ordinary members; allow authorized staff | View Channel, Send Messages, Read Message History, Embed Links, Attach Files |
-| Transactions channel | KAOS parser commands for in-game prizes | Private; ordinary members should not post | View Channel, Send Messages, Read Message History; KAOS must also be able to read |
 
 Allow the bot explicitly even where @everyone cannot send messages. A channel selects WHERE commands run; a role controls WHO may run them.
 
@@ -20,22 +19,23 @@ Run `/gamesadmin setup` and select:
 
 - `games_channel`: Channel where members play games and run game commands.
 - `daily_channel`: Channel with the free daily claim button/command. It may be the same as Games channel.
-- `transactions_channel`: The actual KAOS Transactions channel. Keep it separate from public Games/Daily/Results channels.
-- `kaos_bot`: The actual KAOS bot member, not this Games Bot.
 - `results_channel`: Where draw results and reminders appear.
 - `admin_channel`: Your private management channel.
 - `server_id`: KAOS game-server number, e.g. S1 = 1. This is not your Discord server ID.
-- `linked_role`: Optional existing role that KAOS's linking workflow controls. Do not select a self-assignable role.
 
-In KAOS, set the same Transactions channel with `/admin-channels` and enable log parsing with `/set parser_use on`. The Games Bot appends a KAOS mention to each command. No API key is required for game rewards.
+## 2 Connect KAOS and decide who can play
 
-## 2 Decide who can play
+Create your community-scoped KAOS API key at https://minor.ka0s.uk through `/kaos` → Integrations. Select `links:read`, plus `bank:kit` for kits, `bank:item` for items and `economy:credit` for points. Never post the token in a public channel.
 
-Run `/gamesadmin participation allow_unlinked:true` to let unlinked members play, or false to require a verified KAOS link.
+If the bot host has enabled encrypted owner key entry, use `/gamesadmin api action:set` and paste your key into the private form. Otherwise ask the host to add `KAOS_API_KEY_YOUR_DISCORD_SERVER_ID` to Railway Variables. The key belongs to your Discord community, and game-server number 1 selects KAOS S1 inside that community.
 
-A linked role can be selected in setup/participation. If your KAOS setup does not maintain one, check the player's real KAOS link, then use `/gamesadmin verify_link player:NAME linked:true`. Setting linked:false explicitly blocks delivery even if the role is present. Only the actual server owner can verify links.
+Run `/gamesadmin api action:check` to verify the connection. This does not test every write permission; test a real kit/item/points reward before enabling public games. Remove a saved key with `/gamesadmin api action:remove`; this pauses delivery. A host-managed environment key must be removed by the host.
 
-The Games Bot cannot create or independently check a KAOS link. If you allow unlinked players, their kit/item/point rewards stay pending until the role/owner verification is present. Daily ticket participation follows the same linked/everyone policy. Ticket balances and transfers do not require an in-game delivery.
+Games Bot uses the API directly. No Transactions channel, KAOS bot selection or parser command is required for this bot.
+
+Use `/gamesadmin participation allow_unlinked:true` to let unlinked members play, or false to require a KAOS link. Player links are checked through KAOS automatically and cached for up to 15 minutes. `/link_check` refreshes your status; optional player selects another member. The old linked role and manual verify_link command are no longer used.
+
+If unlinked players may play, their in-game prizes wait until they complete KAOS `/link`. The delivery worker checks again automatically. Tickets, refunds and transfers remain Games Bot currency; they are not KAOS points.
 
 ## 3 Name tickets and set daily claims
 
@@ -83,7 +83,7 @@ Use `/gamesadmin reward_settings availability:both choice_timing:entry`.
 
 - `availability`: `kits` (kits/items), `points`, or `both` (player chooses).
 - `choice_timing`: `entry` or `after` winning.
-- Points are delivered by KAOS as `[POINTS]`; kits/items use `[KIT]` or `[ITEM]`.
+- Points use KAOS economy credit; kits/items are deposited through the KAOS bank API.
 - If using kits or both, configure all three tiers before enabling games/delivery. For a simple first test, choose `availability:points`.
 
 Prize changes affect future games/draws. Existing entries keep their original prizes. To remove the last kit option while games are enabled, first pause games/delivery or switch availability to points.
@@ -188,12 +188,12 @@ Giveaway settings: ticket amount per winner, number of winners, minutes until cl
 ## 8 Test before opening to players
 
 1. Save channels; select points-only rewards for the first test if kits are not configured yet.
-2. Verify a real player's KAOS link using the role or owner verification.
+2. Run `/gamesadmin api action:check`, then `/link_check player:NAME` for a real KAOS-linked player.
 3. Run `/gamesadmin test player:NAME tier:base reward:points`. Review and confirm: this queues a REAL prize, without spending tickets.
 4. Run `/gamesadmin enable games:false delivery:true` to deliver the queued test while games remain closed.
-5. Inspect Transactions and `/gamesadmin report`; ask the player to confirm KAOS points/bank contents. `sent` only proves the parser message was posted.
+5. Inspect `/gamesadmin report`; the reward should become `accepted`. Ask the player to confirm the KAOS points or bank deposit. Accepted is not confirmation that a kit/item has been claimed into inventory.
 6. Test one configured kit. If KAOS rejects a kit name, correct it before creating another test.
-7. Grant a small test ticket balance, enable games and try RPS, daily claim, a short lottery, Bingo and a giveaway. Verify balances, refunds, pending-link prizes and results.
+7. Grant a small test ticket balance, enable games and try RPS, daily claim, a short lottery, Bingo and a giveaway. Verify balances, refunds, API-linked/pending prizes and results.
 8. Check permissions using a normal member: player commands work only in configured channels; admin configuration is refused.
 9. Run `/gamesadmin panel type:games` and `type:daily`. Enable the Games and Delivery settings for normal use.
 
@@ -201,7 +201,7 @@ The secret Tip4Serv purchase URL is set up separately using README.md. Do not ac
 
 ## 9 Access and reports
 
-All setup/configuration, link verification, event controls, live tests and delivery resolution require the actual server owner. Ordinary staff do not become owner by having a role named Owner.
+All setup/configuration, API-key management, event controls, live tests and delivery resolution require the actual server owner. Ordinary staff do not become owner by having a role named Owner.
 
 Manage Server or the configured `staff_role` permits ticket grants/removals, reports and help in Admin channel. Set staff_role in general settings if needed. Normal members can use game, balance, transfer, history, prize and event commands in Games channel; `/daily` uses Daily claim channel. The owner bypasses the bot's channel restriction. Discord's own permissions still apply.
 
@@ -210,13 +210,16 @@ Manage Server or the configured `staff_role` permits ticket grants/removals, rep
 Reward statuses:
 
 - **choice:** Player must select kits or points.
-- **pending:** Waiting to send.
-- **waiting_link:** Player must join the community and have a verified KAOS link.
-- **sent:** Parser command posted. In-game delivery is not confirmed automatically.
-- **failed:** Discord/channel/configuration problem prevented the send.
-- **uncertain:** The send may have happened. No automatic resend.
+- **pending:** Waiting to send, or retrying a temporary API/rate-limit problem.
+- **waiting_link:** Waiting for a KAOS-confirmed player link.
+- **accepted:** KAOS API accepted the credit or bank deposit.
+- **failed:** Missing key/permission, invalid name or another rejection needs owner correction.
+- **migration_hold:** A prior parser send has an uncertain outcome. Review before releasing it to the API.
+- **sent:** Old parser record only; this version never creates new parser sends.
 
-Use `/gamesadmin delivery reward_id:ID action:inspect`. For uncertain sends, use reconcile to look for the bot's receipt in the last 1,000 Transactions messages. If it is absent, inspect older history and KAOS before retrying. `retry` and `mark_sent` require owner confirmation. A sent reward is never automatically replayed. KAOS parser has no documented deduplication key; blindly retrying can duplicate loot.
+Use `/gamesadmin delivery reward_id:ID action:inspect`. Fix a failed API reward, then choose `retry`; it reuses the original reward ID and cannot select accepted rewards. Temporary connection/server/rate-limit failures retry automatically.
+
+For a held legacy parser send only, inspect KAOS and old Transactions history. `legacy_reconcile` searches for the old post; `legacy_mark_sent` records that it was already sent; `legacy_release` queues it for API delivery after you confirm it was never processed. Releasing an already paid parser reward can duplicate it, because API duplicate protection cannot recognize old parser commands. Legacy decisions require owner confirmation. Already-sent legacy rewards are never automatically converted into a second payout.
 
 ## All commands
 
@@ -241,7 +244,8 @@ Use `/gamesadmin delivery reward_id:ID action:inspect`. For uncertain sends, use
 /gamesadmin enable
 /gamesadmin panel
 /gamesadmin tickets
-/gamesadmin verify_link
+/gamesadmin api
+/link_check
 /gamesadmin event
 /gamesadmin report
 /gamesadmin test
