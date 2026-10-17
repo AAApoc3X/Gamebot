@@ -243,7 +243,7 @@ async def show_events(i):
 class APIKeyModal(discord.ui.Modal):
  def __init__(self):
   super().__init__(title='Connect this community to KAOS')
-  self.key=discord.ui.TextInput(label='KAOS API key (not your Discord bot token)',min_length=10,max_length=4096,style=discord.TextStyle.paragraph);self.add_item(self.key)
+  self.key=discord.ui.TextInput(label='KAOS API key (not your Discord bot token)',min_length=10,max_length=4000,style=discord.TextStyle.paragraph);self.add_item(self.key)
  async def on_submit(self,i):
   try:
    guard(i,owner=True);await i.response.defer(ephemeral=True);token=str(self.key).strip();await i.client.kaos.check(i.guild_id,token=token);i.client.kaos.vault.save(i.guild_id,token,i.user.id);await reply(i,'Community API key validated and saved encrypted. It is not included in reports or configuration exports. Configure prizes, test and enable delivery.')
