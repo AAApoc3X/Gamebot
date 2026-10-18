@@ -1,3 +1,7 @@
+## Guided player entry update
+
+Use `/play` for the game menu, including Rust World Lottery, or `/lottery enter` for the same guided lottery purchase. No comma-separated input: manual entry uses three number boxes per combination, while Quick Pick displays generated numbers before confirmation. `/ticketsbalance` replaces `/balance`. Channel setup no longer takes a server ID; manage destinations with `/gamesadmin servers`. Read OWNER_GUIDE.md for the full flow. Keep existing Railway variables, encryption key and persistent storage when updating.
+
 # Rust Games Bot
 
 ## Multiple named reward servers

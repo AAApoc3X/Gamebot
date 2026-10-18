@@ -175,7 +175,7 @@ class Engine:
   r=self.s.db.execute('SELECT * FROM draws WHERE id=?',(key,)).fetchone()
   if not r:raise ValueError('Draw not found.')
   return dict(r)|{'state':json.loads(r['state'])}
- def lottery_enter(self,guild,uid,key,lines,manual,kind,reference,roles=(),server_id=None):
+ def lottery_enter(self,guild,uid,key,lines,manual,kind,reference,roles=(),server_id=None,prepared=None):
   with self.s.atomic():
    self.eligibility(guild,uid,roles);r=self.draw(key);c=r['state']['config'];lo=c['lottery']
    if r['guild']!=guild or r['type']!='lottery' or r['status']!='open':raise ValueError('Draw is closed.')
@@ -190,7 +190,14 @@ class Engine:
    picks=[]
    if manual and lo['pick_mode']=='quick':raise ValueError('This draw permits Quick Pick only.')
    if not manual and lo['pick_mode']=='manual':raise ValueError('This draw requires manual numbers.')
-   if manual:
+   if prepared is not None:
+    if manual or not isinstance(prepared,list)or len(prepared)!=lines:raise ValueError('Invalid reviewed Quick Pick combinations.')
+    for nums in prepared:
+     if not isinstance(nums,(tuple,list))or len(nums)!=3 or any(type(n)is not int for n in nums)or len(set(nums))!=3 or not all(lo['min']<=n<=lo['max']for n in nums):raise ValueError('Invalid reviewed Quick Pick numbers.')
+     nums=tuple(sorted(nums))
+     if nums in old or nums in picks:raise ValueError('A reviewed combination is already entered. Reopen the lottery menu.')
+     picks.append(nums)
+   elif manual:
     chunks=manual.replace('\n',';').split(';')
     if len(chunks)!=lines:raise ValueError('Provide one three-number combination per line, separated by semicolons.')
     for chunk in chunks:

@@ -4,7 +4,7 @@ Updated October 17, 2026. This package replaces parser-based rewards with KAOS k
 
 ## Automated validation
 
-71 tests pass, using local databases and simulated Discord, HTTP and KAOS responses.
+85 tests pass, using local databases and simulated Discord, HTTP and KAOS responses.
 
 Retained game checks cover wallets, balance conservation, duplicate transfers, midnight/24-hour claims, all 11 games, game ownership, frozen prize rules, inactivity refunds, after-win choices, unique lottery picks, bundle refunds, cutoff windows, highest/each payouts, Bingo, giveaways, purchase deduplication, secret Tip4Serv authentication, daylight-saving schedules and restart persistence.
 
@@ -38,3 +38,5 @@ API accepted means the credit/bank endpoint returned success. It does not mean a
 Ten additional tests cover catalog isolation, no-charge missing selection, saved preferences, immutable destinations, after-win holds, reward ownership, bundle-wide destinations, choosing prize/server in either order, lottery/Bingo destinations, ticket-only giveaways and catalog changes after entry.
 
 Guided settings tests cover default sections, native selectors, draft validation, stale settings conflicts, ownership checks, multi-reward bundles/products, odds input, cancellation, save confirmation and the 4,000-character API-key form. No live Discord/KAOS credentials were used.
+
+Player-entry update: 14 additional tests cover manual number fields, reviewed Quick Pick persistence, quick-only/manual-only rules, duplicate purchase prevention, cancellation, account control ownership, stale modal submissions, frozen bundle prices, destination/reward choices, count-menu pagination and command schema changes.

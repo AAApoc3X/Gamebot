@@ -69,3 +69,5 @@ The destination setting controls WHERE rewards are delivered. It does not split 
 Existing queued rewards and paid Games entries keep their original destinations. New behavior applies to new entries/rewards after the owner configures a catalog. Until a catalog is configured, each bot retains its previous single-server fallback behavior. Catalogs and preferences persist across restarts.
 
 The catalog is managed through the server commands and stored in the persistent database. Preserve the persistent database and keep a record of the configured names/slots. Removing all active catalog entries blocks new game entries until the owner adds an available server.
+
+Games Bot channel setup no longer accepts a server ID. Use the server catalog commands above; existing defaults remain stored for backward compatibility. The guided lottery entry menu has its own server dropdown when before-entry selection is configured.

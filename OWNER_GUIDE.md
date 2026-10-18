@@ -1,3 +1,9 @@
+# Player menu update
+
+`/play` without arguments opens the games menu. Rust World Lottery appears alongside enabled instant games and opens the same private entry menu as `/lottery enter`. Disabled instant games are hidden from selection; their engine checks still reject stale menu entries. A lottery already opened by the owner remains available until closed/cancelled, even if automatic future draws are disabled. Global game pause blocks new entries. Paid entries retain their original rules.
+
+`/ticketsbalance` replaces `/balance`. The Games panel keeps its existing balance button working. `/give` transfers existing tickets and cannot mint tickets or send them to yourself. Authorized staff grant tickets with `/gamesadmin tickets player:MEMBER amount:10 reason:Testing`, then Confirm.
+
 # Guided settings update
 
 All normal owner setup uses Discord command fields, dropdowns, channel/role selectors, buttons and labeled forms. There is no configuration-file upload or JSON text editor. Start with `/gamesadmin settings` for the complete panel, or `/gamesadmin configure` to jump to a section. Reports may still be downloaded for reading; they are not settings files to edit or upload.
@@ -31,7 +37,7 @@ Run `/gamesadmin setup` and select:
 - `daily_channel`: Channel with the free daily claim button/command. It may be the same as Games channel.
 - `results_channel`: Where draw results and reminders appear.
 - `admin_channel`: Your private management channel.
-- `server_id`: KAOS game-server number, e.g. S1 = 1. This is not your Discord server ID.
+- Reward destinations are configured with `/gamesadmin servers`, not the channel setup command. Existing stored defaults remain for compatibility; player-selected destinations take priority.
 
 ## 2 Connect KAOS and decide who can play
 
@@ -166,10 +172,10 @@ With Best combination per player, returns apply to the total draw spend only if 
 Player entry example:
 
 ```
-/lottery enter combinations:2 numbers:1,2,3;4,5,6 reward:kits
+/lottery enter
 ```
 
-Leave numbers blank for Quick Pick. The player reviews cost/prize rules then confirms. `/lottery show` shows rules; `/lottery entries` downloads their entries.
+The command has no typed entry parameters. Choose a combination count from the dropdown, select Pick My Numbers or Quick Pick, and choose the reward server/type when required. Pick My Numbers opens three separate labeled number boxes per combination; repeat for each combination. Quick Pick fills and displays all combinations before payment. Review Entry shows cost, rules and destination. Confirm Entry purchases exactly the displayed numbers. Cancel spends no tickets. `/lottery show` includes an Enter Lottery button; `/lottery entries` shows purchased entries. For more than 25 combinations, use More combinations to page the count menu. Large reviews include a complete read-only text attachment. Entries must still meet draw cutoffs, account-link rules and the per-player limit at confirmation.
 
 Owner controls: `/gamesadmin event type:lottery action:open`, `draw`, or `cancel`. Actions require confirmation. Cancel refunds actual entry costs. Changes to lottery rules/schedule apply to the NEXT draw; an already open draw keeps its existing deadline, price and rules. Disable lottery AND cancel its current draw to stop it completely. Pausing new games alone does not cancel paid draws.
 
@@ -223,7 +229,7 @@ For a held legacy parser send only, inspect KAOS and old Transactions history. `
 /games
 /play
 /daily
-/balance
+/ticketsbalance
 /give
 /resume
 /prizes

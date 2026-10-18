@@ -160,26 +160,46 @@ async def review_game(i,game,level,kind,server_id=None):
   button.callback=change;view.add_item(button)
  await reply(i,text,view=view,file=file_json('prize-rules.json',{'prizes':c['prizes'],'game':g,'reward_mode':c['reward_mode'],'choice_timing':c['choice_timing']}))
 
+def available_games(config,lottery_open=False):
+ games=[g for g in GAMES if config['games'][g]['enabled']]
+ if config['lottery']['enabled']or lottery_open:games.append('lottery')
+ return games
+
+async def open_lobby(i):
+ c=guard(i,player=True)
+ if not c['enabled']:raise ValueError('New game entries are paused.')
+ opened=i.client.store.db.execute('SELECT 1 FROM draws WHERE guild=? AND type="lottery" AND status="open"',(i.guild_id,)).fetchone()
+ choices=available_games(c,bool(opened))
+ if not choices:raise ValueError('No games are currently available.')
+ await reply(i,'Choose a game, entry level and reward type. Lottery opens its own guided entry menu.',view=Lobby(i.user.id,c,bool(opened)))
+
 class Lobby(SafeView):
- def __init__(self,uid):
-  super().__init__(uid);self.game='supply_drop';self.level='base';self.kind='kits'
-  for field,opts,placeholder in [('game',[(GAME_LABELS[x],x)for x in GAMES],'Game (default Supply Drop)'),('level',[(x.title(),x)for x in TIERS],'Entry level (default Base)'),('kind',[('Kits or items','kits'),('KAOS points','points')],'Reward (default Kits/items)')]:
+ def __init__(self,uid,config=None,lottery_open=False):
+  super().__init__(uid);config=config or defaults();choices=available_games(config,lottery_open)
+  self.game=choices[0]if choices else None;self.level='base';self.kind='points'if config['reward_mode']=='points'else 'kits'
+  if not choices:return
+  for field,opts,placeholder in [('game',[(GAME_LABELS.get(x,'Rust World Lottery'),x)for x in choices],'Choose a game'),('level',[(x.title(),x)for x in TIERS],'Entry level (instant games only)'),('kind',[('Kits or items','kits'),('KAOS points','points')],'Reward (lottery asks separately)')]:
    sel=discord.ui.Select(placeholder=placeholder,options=[discord.SelectOption(label=l,value=v)for l,v in opts])
-   async def choose(i,field=field,sel=sel):setattr(self,field,sel.values[0]);await i.response.defer()
+   async def choose(i,field=field,sel=sel):
+    guard(i,player=True);setattr(self,field,sel.values[0]);await i.response.defer()
    sel.callback=choose;self.add_item(sel)
- @discord.ui.button(label='Review entry',style=discord.ButtonStyle.success)
- async def enter(self,i,b):await review_game(i,self.game,self.level,self.kind)
+ @discord.ui.button(label='Continue to game',style=discord.ButtonStyle.success)
+ async def enter(self,i,b):
+  if self.game=='lottery':
+   from lottery_ui import open_lottery
+   await open_lottery(i,guard,reply,ensure_link)
+  else:await review_game(i,self.game,self.level,self.kind)
 
 class Panel(SafeView):
  def __init__(self,type_):
   super().__init__(timeout=None);self.type=type_
-  buttons=[('Claim Daily Tickets','daily')]if type_=='daily'else [('Choose a game','lobby'),('My balance','balance'),('My prizes','prizes'),('Lottery','lottery'),('Bingo and giveaways','events')]
+  buttons=[('Claim Daily Tickets','daily')]if type_=='daily'else [('Choose a game','lobby'),('My ticket balance','balance'),('My prizes','prizes'),('Lottery','lottery'),('Bingo and giveaways','events')]
   for label,action in buttons:
    btn=discord.ui.Button(label=label,style=discord.ButtonStyle.primary,custom_id='gamespanel:'+action)
    async def click(i,action=action):
     if action=='daily':
      c=guard(i,player=True,daily=True);await ensure_link(i);amount=i.client.engine.claim(i.guild_id,i.user.id,'button',roles(i));await reply(i,f'Claimed **{amount} {c["currency"]}**.')
-    elif action=='lobby':guard(i,player=True);await reply(i,'Choose a game, entry level and reward type, then review the cost.',view=Lobby(i.user.id))
+    elif action=='lobby':await open_lobby(i)
     elif action=='balance':guard(i,player=True);await reply(i,f'Balance: **{i.client.store.balance(i.guild_id,i.user.id)} {i.client.store.cfg(i.guild_id)["currency"]}**.')
     elif action=='prizes':await show_prizes(i)
     elif action=='lottery':await show_lottery(i)
@@ -217,8 +237,14 @@ async def show_lottery(i):
  if not r:await reply(i,'No open lottery draw. Ask the owner to enable/open one.');return
  draw=i.client.engine.draw(r[0]);lo=draw['state']['config']['lottery'];due=f'<t:{int(draw["due"])}:F>'if draw['due']else 'Owner will draw manually'
  probs=lottery_probabilities(lo['min'],lo['max'],1)
- text=f'**Rust World Lottery**\nDraw ID: `{r[0]}`\nDraw: {due}\nChoose 3 different numbers from {lo["min"]}–{lo["max"]}; matches count in any order.\nCost per combination: {lo["cost"]} tickets. Payout: {lo["payout"]}.\n1/2/3 matches: '+', '.join(lo['reward_tiers'][str(k)].title()for k in (1,2,3))+f'. Zero matches: {json.dumps(lo["zero_return"])}.\nSingle-combination match chances: '+', '.join(f'{k}: {v:.4%}'for k,v in probs['one_combination'].items())+'.\nUse `/lottery enter` with a combination count and optional numbers. More unique combinations improve the chance of a higher match.'
- await reply(i,text)
+ text=f'**Rust World Lottery**\nDraw ID: `{r[0]}`\nDraw: {due}\nChoose 3 different numbers from {lo["min"]}–{lo["max"]}; matches count in any order.\nCost per combination: {lo["cost"]} tickets. Payout: {lo["payout"]}.\n1/2/3 matches: '+', '.join(lo['reward_tiers'][str(k)].title()for k in (1,2,3))+f'. Zero matches: {json.dumps(lo["zero_return"])}.\nSingle-combination match chances: '+', '.join(f'{k}: {v:.4%}'for k,v in probs['one_combination'].items())+'.\nUse `/lottery enter` for number boxes or Quick Pick, then review and confirm. More unique combinations improve the chance of a higher match.'
+ view=SafeView(i.user.id)
+ button=discord.ui.Button(label='Enter Lottery',style=discord.ButtonStyle.primary)
+ async def enter_menu(j):
+  from lottery_ui import open_lottery
+  await open_lottery(j,guard,reply,ensure_link)
+ button.callback=enter_menu;view.add_item(button)
+ await reply(i,text,view=view)
 
 async def show_events(i):
  guard(i,player=True);rs=i.client.store.db.execute('SELECT id,type,due FROM draws WHERE guild=? AND status="open" AND type IN ("bingo","giveaway")',(i.guild_id,)).fetchall();v=SafeView(i.user.id)
@@ -305,10 +331,20 @@ def attach_commands(bot):
  admin=app_commands.Group(name='gamesadmin',description='Owner setup, game settings, rewards and ticket administration',guild_only=True)
  lottery=app_commands.Group(name='lottery',description='Rust World Lottery entries and results',guild_only=True)
  @bot.tree.command(name='games',description='Open the games menu')
- async def games(i:discord.Interaction):guard(i,player=True);await reply(i,'Choose a game, entry level and reward type.',view=Lobby(i.user.id))
+ async def games(i:discord.Interaction):await open_lobby(i)
  @bot.tree.command(name='play',description='Review a game, ticket cost and prize rules before spending')
  @app_commands.describe(game='Game to play',level='Base, Elite or Premium entry level',reward='Kits/items or KAOS points; owner settings determine when you choose')
- async def play(i:discord.Interaction,game:GameName,level:Level='base',reward:Kind='kits',server_id:Optional[int]=None):await review_game(i,game,level,reward,server_id)
+ async def play(i:discord.Interaction,game:Optional[str]=None,level:Level='base',reward:Kind='kits',server_id:Optional[int]=None):
+  if game is None:await open_lobby(i)
+  elif game=='lottery':
+   from lottery_ui import open_lottery
+   await open_lottery(i,guard,reply,ensure_link)
+  elif game in GAMES:await review_game(i,game,level,reward,server_id)
+  else:raise ValueError('Choose a game from the suggestions or open /play without arguments.')
+ @play.autocomplete('game')
+ async def play_games(i,current):
+  c=guard(i,player=True);opened=bot.store.db.execute('SELECT 1 FROM draws WHERE guild=? AND type="lottery" AND status="open"',(i.guild_id,)).fetchone()
+  return [app_commands.Choice(name=GAME_LABELS.get(g,'Rust World Lottery'),value=g)for g in available_games(c,bool(opened))if current.lower()in GAME_LABELS.get(g,'Rust World Lottery').lower()][:25]
  @bot.tree.command(name='server',description='Choose your preferred game server for future reward entries')
  async def server(i:discord.Interaction):
   c=guard(i,player=True);dest=bot.store.destinations
@@ -326,12 +362,13 @@ def attach_commands(bot):
  @bot.tree.command(name='daily',description='Claim your daily tickets in the Daily claim channel')
  async def daily(i:discord.Interaction):
   c=guard(i,player=True,daily=True);await ensure_link(i);n=bot.engine.claim(i.guild_id,i.user.id,'command',roles(i));await reply(i,f'Claimed **{n} {c["currency"]}**.')
- @bot.tree.command(name='balance',description='See your ticket balance')
+ @bot.tree.command(name='ticketsbalance',description='See your Games Bot ticket balance, separate from KAOS points')
  async def balance(i:discord.Interaction):c=guard(i,player=True);await reply(i,f'Balance: **{bot.store.balance(i.guild_id,i.user.id)} {c["currency"]}**.')
  @bot.tree.command(name='give',description='Give tickets to another player with confirmation')
  async def give(i:discord.Interaction,player:discord.Member,amount:app_commands.Range[int,1,1000000]):
   c=guard(i,player=True)
   if player.bot:raise ValueError('Choose a human player.')
+  if player.id==i.user.id:raise ValueError('You cannot transfer tickets to yourself. /give transfers tickets you already own. Authorized staff add tickets with /gamesadmin tickets.')
   async def accept(j):
    guard(j,player=True);bot.store.transfer(j.guild_id,j.user.id,player.id,amount,'transfer:'+str(j.id));await edit_message(j,content=f'Transferred {amount} {c["currency"]} to {player.display_name}.',view=None,allowed_mentions=discord.AllowedMentions.none())
   await reply(i,f'Give **{amount} {c["currency"]}** to **{player.display_name}**?',view=Confirm(i.user.id,accept))
@@ -353,44 +390,22 @@ def attach_commands(bot):
  async def events(i:discord.Interaction):await show_events(i)
  @lottery.command(name='show',description='See the current draw, rules, entry cost and odds')
  async def show(i:discord.Interaction):await show_lottery(i)
- @lottery.command(name='enter',description='Review manual picks or Quick Pick combinations before paying')
- @app_commands.describe(combinations='Number of unique three-number combinations to buy',numbers='Optional: 1,2,3; 4,5,6. Leave blank for Quick Pick.',reward='Kits/items or KAOS points')
- async def enter(i:discord.Interaction,combinations:app_commands.Range[int,1,100]=1,numbers:str='',reward:Kind='kits',server_id:Optional[int]=None):
-  c=guard(i,player=True);r=bot.store.db.execute('SELECT id FROM draws WHERE guild=? AND type="lottery" AND status="open"',(i.guild_id,)).fetchone()
-  if not r:raise ValueError('No open lottery.')
-  draw=bot.engine.draw(r[0]);lo=draw['state']['config']['lottery'];prob=lottery_probabilities(lo['min'],lo['max'],combinations)
-  frozen=draw['state']['config'];options=frozen.get('_destination_options',[{'slot':frozen['server_id'],'label':f"Game server {frozen['server_id']}"}])
-  if frozen.get('_destination_timing','before')=='before':
-   preferred=server_id if server_id is not None else bot.store.destinations.preference(i.guild_id,i.user.id)
-   if preferred is None and len(options)==1:preferred=options[0]['slot']
-   if preferred not in [x['slot']for x in options]:
-    async def selected(j,slot):await enter.callback(j,combinations,numbers,reward,slot)
-    await reply(i,'Choose the server for any kit or points prize from this purchase.',view=ServerPicker(i.user.id,options,selected));return
-   server_id=preferred
-
-  async def accept(j):
-   guard(j,player=True);await ensure_link(j,required=(not bot.store.cfg(j.guild_id)['allow_unlinked'] or not draw['state']['config']['allow_unlinked']));picks=bot.engine.lottery_enter(j.guild_id,j.user.id,r[0],combinations,numbers,reward,'lotteryentry:'+str(j.id),roles(j),server_id=server_id);await edit_message(j,content='Entered draw `'+r[0]+'`. Your numbers:\n'+'\n'.join(', '.join(map(str,x))for x in picks),view=None)
-  view=Confirm(i.user.id,accept)
-  if frozen.get('_destination_timing','before')=='before' and len(options)>1:
-   button=discord.ui.Button(label='Change reward server',style=discord.ButtonStyle.secondary)
-   async def change(j):
-    view.stop()
-    async def selected(k,slot):await enter.callback(k,combinations,numbers,reward,slot)
-    await reply(j,'Choose another reward server before paying.',view=ServerPicker(j.user.id,options,selected))
-   button.callback=change;view.add_item(button)
-  await reply(i,f'Buy **{combinations} combinations** for **{lo["bundles"].get(str(combinations),combinations*lo["cost"])} {c["currency"]}**?\nPicks: {numbers or "Quick Pick"}\nReward server: {('S'+str(server_id))if frozen.get('_destination_timing','before')=='before'else 'choose after winning'}\nPayout: {lo["payout"]}; reward: {reward if draw["state"]["config"]["choice_timing"]=="entry" else "choose after winning"}.\n1/2/3 matches: '+', '.join(lo['reward_tiers'][str(k)]for k in (1,2,3))+f'. Zero-match return: {json.dumps(lo["zero_return"])}.\nChance of all three numbers across these new unique combinations: {prob["premium_any"]:.6%}. Lower match odds depend on overlap between your combinations.',view=view,file=file_json('lottery-prize-rules.json',draw['state']['config']['prizes']))
+ @lottery.command(name='enter',description='Open lottery choices with number boxes, Quick Pick and purchase review')
+ async def enter(i:discord.Interaction):
+  from lottery_ui import open_lottery
+  await open_lottery(i,guard,reply,ensure_link)
  @lottery.command(name='entries',description='See your combinations in the current lottery')
  async def entries(i:discord.Interaction):
   guard(i,player=True);rs=[dict(r)for r in bot.store.db.execute('SELECT entries.* FROM entries JOIN draws ON entries.draw=draws.id WHERE draws.guild=? AND entries.uid=? AND draws.type="lottery" ORDER BY draws.created DESC LIMIT 1000',(i.guild_id,i.user.id))];await reply(i,'Your latest lottery entries.',file=file_json('lottery-entries.json',rs))
  @admin.command(name='setup',description='Owner selects Games, Daily claim, results and admin channels')
- @app_commands.describe(games_channel='Channel where members play games and run game commands',daily_channel='Channel with the free daily claim button and/or daily command',server_id='KAOS game server number: S1 = 1, S2 = 2; not your Discord server ID',results_channel='Channel for lottery numbers and community event results',admin_channel='Private channel for owner and authorized staff commands')
- async def setup(i:discord.Interaction,games_channel:discord.TextChannel,daily_channel:discord.TextChannel,results_channel:discord.TextChannel,admin_channel:discord.TextChannel,server_id:app_commands.Range[int,1,100]=1):
+ @app_commands.describe(games_channel='Channel where members play games and run game commands',daily_channel='Channel with the free daily claim button and/or daily command',results_channel='Channel for lottery numbers and community event results',admin_channel='Private channel for owner and authorized staff commands')
+ async def setup(i:discord.Interaction,games_channel:discord.TextChannel,daily_channel:discord.TextChannel,results_channel:discord.TextChannel,admin_channel:discord.TextChannel):
   guard(i,owner=True)
   for ch in (games_channel,daily_channel,results_channel,admin_channel):
    permissions=ch.permissions_for(i.guild.me)
    if not(permissions.view_channel and permissions.send_messages and permissions.read_message_history):raise ValueError(f'Bot needs View Channel, Send Messages and Read Message History in {ch.name}.')
    if ch in (games_channel,admin_channel) and not(permissions.attach_files and permissions.embed_links):raise ValueError(f'Bot needs Attach Files and Embed Links in {ch.name}.')
-  c=bot.store.cfg(i.guild_id);c.update(games_channel=games_channel.id,daily_channel=daily_channel.id,results_channel=results_channel.id,admin_channel=admin_channel.id,server_id=server_id);bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Channels saved. Use /gamesadmin api to connect this community’s KAOS API key. Transactions channel and parser settings are not used.')
+  c=bot.store.cfg(i.guild_id);c.update(games_channel=games_channel.id,daily_channel=daily_channel.id,results_channel=results_channel.id,admin_channel=admin_channel.id);bot.store.save(i.guild_id,c,i.user.id);await reply(i,'Channels saved. Manage reward destinations with /gamesadmin servers. Use /gamesadmin api to connect this community’s KAOS API key. Transactions channel and parser settings are not used.')
  @admin.command(name='api',description='Owner connects, checks or removes this community’s KAOS API key')
  async def api(i:discord.Interaction,action:Literal['set','check','remove']='check'):
   guard(i,owner=True)
